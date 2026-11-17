@@ -1,3 +1,5 @@
+import type { ImageAttachment } from '@/types';
+
 export type ProviderId = 'ollama' | 'openai' | 'anthropic' | 'gemini' | 'groq';
 
 export type ProviderType = 'local' | 'cloud';
@@ -15,11 +17,13 @@ export interface ModelInfo {
   description?: string;
   contextLength?: number;
   isLocal?: boolean;
+  supportsVision?: boolean;
 }
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
+  attachments?: ImageAttachment[];
 }
 
 export interface ChatCompletionRequest {
@@ -28,6 +32,7 @@ export interface ChatCompletionRequest {
   temperature?: number;
   maxTokens?: number;
   stream?: boolean;
+  attachments?: ImageAttachment[];
 }
 
 export interface ChatCompletionResponse {

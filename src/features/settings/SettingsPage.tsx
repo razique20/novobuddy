@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Sliders,
   Palette,
@@ -10,15 +10,20 @@ import {
   RotateCcw,
   AlertTriangle,
   ExternalLink,
+  Monitor,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import { useSettingsStore } from '../../stores/settingsStore';
 import { useAppStore } from '../../stores/appStore';
-import { SettingsSection, ThemeMode } from '../../types';
+import { ScreenshotRetentionPolicy, SettingsSection, ThemeMode } from '../../types';
 import { Switch } from '../../components/common/Switch';
 import { Badge } from '../../components/common/Badge';
 import { NativeBridge } from '../../services/native/bridge';
 import { NovaLogo } from '../../components/common/NovaLogo';
 import { ProviderSettingsView } from '../../components/providers/ProviderSettingsView';
+import { ScreenContextService } from '../../services/screen/ScreenContextService';
+import { aiProviderManager } from '../../services/ai/AIProviderManager';
 
 export const SettingsPage: React.FC = () => {
   const { settings, updateSettings, setTheme, clearData } = useSettingsStore();
@@ -27,6 +32,14 @@ export const SettingsPage: React.FC = () => {
 
   const [confirmClear, setConfirmClear] = useState(false);
   const [saveBanner, setSaveBanner] = useState(false);
+  const [permissionStatus, setPermissionStatus] = useState<{ has_permission: boolean; message: string } | null>(null);
+  const [newExcludedApp, setNewExcludedApp] = useState('');
+  const [cacheNotice, setCacheNotice] = useState(false);
+  const [visionFallbackEnabled, setVisionFallbackEnabled] = useState(aiProviderManager.isVisionFallbackEnabled());
+
+  useEffect(() => {
+    ScreenContextService.checkPermission().then(setPermissionStatus).catch(() => {});
+  }, []);
 
   const triggerSaveNotice = () => {
     setSaveBanner(true);
@@ -37,6 +50,7 @@ export const SettingsPage: React.FC = () => {
     { id: 'general', label: 'General', icon: Sliders },
     { id: 'appearance', label: 'Appearance', icon: Palette },
     { id: 'shortcuts', label: 'Shortcuts', icon: Keyboard },
+    { id: 'screen_privacy', label: 'Screen & Vision', icon: Monitor },
     { id: 'privacy', label: 'Privacy & Data', icon: Shield },
     { id: 'providers', label: 'AI Providers', icon: Cpu },
     { id: 'about', label: 'About NOVA', icon: Info },
@@ -280,6 +294,251 @@ export const SettingsPage: React.FC = () => {
                   Summon Companion Now
                 </button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Section: Screen & Vision (Phase 3) */}
+        {currentSettingsSection === 'screen_privacy' && (
+          <div className="space-y-6 animate-fade-in">
+            <div>
+              <h2 className="text-base font-semibold text-text-primary">Screen & Visual Intelligence</h2>
+              <p className="text-xs text-text-secondary mt-0.5">
+                Explicit-only visual companion controls, native Apple Vision OCR, and zero-retention privacy.
+              </p>
+            </div>
+
+            {/* macOS Permission Status Card */}
+            <div className="nova-glass-card rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-medium text-text-primary flex items-center gap-2">
+                    <span>macOS Screen Recording Permission</span>
+                    {permissionStatus?.has_permission ? (
+                      <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 px-2 py-0.5 rounded-full font-semibold">
+                        <Check className="w-3 h-3" />
+                        Granted
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1 text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-full font-semibold">
+                        <AlertTriangle className="w-3 h-3" />
+                        Needs Permission
+                      </span>
+                    )}
+                  </div>
+                  <div className="text-[11px] text-text-muted mt-0.5">
+                    {permissionStatus?.message || 'Checking macOS system permission...'}
+                  </div>
+                </div>
+
+                <button
+                  onClick={async () => {
+                    const res = await ScreenContextService.requestPermission();
+                    setPermissionStatus(res);
+                  }}
+                  className="px-3 py-1.5 rounded-xl bg-background-card hover:bg-white/5 border border-border/80 hover:border-primary/50 text-xs font-medium text-text-primary transition-colors cursor-pointer"
+                >
+                  {permissionStatus?.has_permission ? 'Recheck' : 'Request Access'}
+                </button>
+              </div>
+            </div>
+
+            {/* Visual Controls */}
+            <div className="nova-glass-card rounded-xl p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-medium text-text-primary">Enable Screen Capture</div>
+                  <div className="text-[11px] text-text-muted">
+                    Allows manual capture of full displays, windows, or regions when you click Capture
+                  </div>
+                </div>
+                <Switch
+                  checked={settings.screen_capture_enabled ?? true}
+                  onChange={(val) => {
+                    updateSettings({ screen_capture_enabled: val });
+                    triggerSaveNotice();
+                  }}
+                />
+              </div>
+
+              <div className="border-t border-border/40 pt-4 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-medium text-text-primary">Apple Vision OCR</div>
+                  <div className="text-[11px] text-text-muted">
+                    Automatically recognize on-screen text using Apple Vision framework with zero latency
+                  </div>
+                </div>
+                <Switch
+                  checked={settings.ocr_enabled ?? true}
+                  onChange={(val) => {
+                    updateSettings({ ocr_enabled: val });
+                    triggerSaveNotice();
+                  }}
+                />
+              </div>
+
+              <div className="border-t border-border/40 pt-4 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-medium text-text-primary">Screenshot Retention Policy</div>
+                  <div className="text-[11px] text-text-muted">
+                    Ephemeral policy purges screenshots immediately from memory after analysis
+                  </div>
+                </div>
+                <select
+                  value={settings.screenshot_retention_policy || 'ephemeral'}
+                  onChange={(e) => {
+                    updateSettings({ screenshot_retention_policy: e.target.value as ScreenshotRetentionPolicy });
+                    triggerSaveNotice();
+                  }}
+                  className="bg-background-card border border-border rounded-lg text-xs text-text-primary px-3 py-1.5 outline-none cursor-pointer"
+                >
+                  <option value="ephemeral">Ephemeral (Zero Retention)</option>
+                  <option value="session">Session Only (Clears on quit)</option>
+                  <option value="30_days">Persist with Conversation (30 days)</option>
+                </select>
+              </div>
+
+              <div className="border-t border-border/40 pt-4 flex items-center justify-between">
+                <div>
+                  <div className="text-xs font-medium text-text-primary">Vision Auto-Fallback</div>
+                  <div className="text-[11px] text-text-muted">
+                    If Groq vision is overloaded, automatically retry on Ollama or Gemini Flash (all free)
+                  </div>
+                </div>
+                <Switch
+                  checked={visionFallbackEnabled}
+                  onChange={(val) => {
+                    setVisionFallbackEnabled(val);
+                    aiProviderManager.setVisionFallbackEnabled(val);
+                    triggerSaveNotice();
+                  }}
+                />
+              </div>
+            </div>
+
+            {/* Free Vision Provider Chain Info */}
+            <div className="p-4 rounded-xl border border-primary/20 bg-primary/5 space-y-2.5">
+              <div className="text-xs font-semibold text-primary flex items-center gap-2">
+                <Cpu className="w-3.5 h-3.5" />
+                <span>Free Vision Provider Chain</span>
+              </div>
+              <div className="text-[11px] text-text-secondary leading-relaxed">
+                When a vision request fails, NOVA automatically tries the next free provider:
+              </div>
+              <div className="flex flex-wrap gap-1.5 items-center">
+                {[
+                  { label: 'Groq Vision (11B)', badge: 'cloud' },
+                  { label: 'Groq Vision (90B)', badge: 'cloud' },
+                  { label: 'Ollama Vision', badge: 'local' },
+                  { label: 'LLaVA (Ollama)', badge: 'local' },
+                  { label: 'Gemini Flash', badge: 'free tier' },
+                ].map((item, i, arr) => (
+                  <React.Fragment key={item.label}>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-lg bg-background-card border border-border/60 text-[10px] text-text-primary">
+                      {item.label}
+                      <span className={`text-[9px] px-1 py-0 rounded ${item.badge === 'local' ? 'bg-emerald-500/20 text-emerald-400' : item.badge === 'free tier' ? 'bg-blue-500/20 text-blue-400' : 'bg-purple-500/20 text-purple-400'}`}>
+                        {item.badge}
+                      </span>
+                    </span>
+                    {i < arr.length - 1 && (
+                      <span className="text-text-muted text-[10px]">→</span>
+                    )}
+                  </React.Fragment>
+                ))}
+              </div>
+            </div>
+
+            {/* Excluded Applications */}
+            <div className="nova-glass-card rounded-xl p-4 space-y-3">
+              <div>
+                <div className="text-xs font-medium text-text-primary">Excluded Applications (Privacy Shield)</div>
+                <div className="text-[11px] text-text-muted mt-0.5">
+                  Windows belonging to these applications will never appear in window pickers or be captured.
+                </div>
+              </div>
+
+              {/* Tag list */}
+              <div className="flex flex-wrap gap-2 pt-1">
+                {(settings.excluded_applications || ['Keychain Access', '1Password', 'Bitwarden']).map((app) => (
+                  <div
+                    key={app}
+                    className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-background-secondary border border-border/70 text-xs text-text-primary"
+                  >
+                    <span>{app}</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const current = settings.excluded_applications || [];
+                        const updated = current.filter((x) => x !== app);
+                        updateSettings({ excluded_applications: updated });
+                        triggerSaveNotice();
+                      }}
+                      className="text-text-muted hover:text-red-400 p-0.5 rounded cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              {/* Add new excluded app form */}
+              <div className="flex items-center gap-2 pt-2">
+                <input
+                  type="text"
+                  value={newExcludedApp}
+                  onChange={(e) => setNewExcludedApp(e.target.value)}
+                  placeholder="App name (e.g. Signal, Telegram)..."
+                  className="flex-1 px-3 py-1.5 rounded-xl bg-background-card border border-border text-xs text-text-primary placeholder:text-text-muted outline-none focus:border-primary/60"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && newExcludedApp.trim()) {
+                      e.preventDefault();
+                      const current = settings.excluded_applications || [];
+                      if (!current.includes(newExcludedApp.trim())) {
+                        updateSettings({ excluded_applications: [...current, newExcludedApp.trim()] });
+                        setNewExcludedApp('');
+                        triggerSaveNotice();
+                      }
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (newExcludedApp.trim()) {
+                      const current = settings.excluded_applications || [];
+                      if (!current.includes(newExcludedApp.trim())) {
+                        updateSettings({ excluded_applications: [...current, newExcludedApp.trim()] });
+                        setNewExcludedApp('');
+                        triggerSaveNotice();
+                      }
+                    }
+                  }}
+                  className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-medium cursor-pointer shadow-sm transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  <span>Add</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Clear Temporary Cache Card */}
+            <div className="p-4 rounded-xl border border-border/70 bg-background-card/40 flex items-center justify-between">
+              <div>
+                <div className="text-xs font-medium text-text-primary">Temporary Screenshot Cache</div>
+                <div className="text-[11px] text-text-muted">
+                  Clear any cached capture bitmaps from memory
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setCacheNotice(true);
+                  setTimeout(() => setCacheNotice(false), 2000);
+                }}
+                className="px-3 py-1.5 rounded-xl bg-background-secondary hover:bg-white/5 border border-border text-xs text-text-primary transition-colors cursor-pointer"
+              >
+                {cacheNotice ? 'Cache Purged' : 'Purge Cache'}
+              </button>
             </div>
           </div>
         )}

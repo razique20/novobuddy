@@ -1,7 +1,13 @@
 import {
   ApplicationSettings,
+  CaptureRegion,
   Conversation,
   Message,
+  OcrTextItem,
+  ScreenCaptureResult,
+  ScreenDisplayInfo,
+  ScreenPermissionStatus,
+  ScreenWindowInfo,
   ShortcutStatus,
   SystemStatus,
 } from '../../types';
@@ -463,6 +469,105 @@ export class NativeBridge {
         reject(new Error(typeof err === 'string' ? err : err?.message || 'Native stream failed'));
       });
     });
+  }
+
+  // --- Phase 3: Screen Awareness & Visual Intelligence ---
+
+  static async checkScreenPermission(): Promise<ScreenPermissionStatus> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<ScreenPermissionStatus>('check_screen_permission');
+    }
+    return {
+      has_permission: true,
+      message: 'Screen recording permission is granted (browser fallback)',
+    };
+  }
+
+  static async requestScreenPermission(): Promise<ScreenPermissionStatus> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<ScreenPermissionStatus>('request_screen_permission');
+    }
+    return {
+      has_permission: true,
+      message: 'Screen recording permission granted',
+    };
+  }
+
+  static async getScreenDisplays(): Promise<ScreenDisplayInfo[]> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<ScreenDisplayInfo[]>('get_screen_displays');
+    }
+    return [
+      {
+        id: 1,
+        index: 1,
+        name: 'Main Built-in Display',
+        is_main: true,
+        width: 1920,
+        height: 1080,
+      },
+    ];
+  }
+
+  static async getScreenWindows(): Promise<ScreenWindowInfo[]> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<ScreenWindowInfo[]>('get_screen_windows');
+    }
+    return [
+      {
+        id: 101,
+        app_name: 'Finder',
+        title: 'Desktop',
+        pid: 1,
+        width: 1920,
+        height: 1080,
+        is_excluded: false,
+      },
+    ];
+  }
+
+  static async captureScreen(options: {
+    mode: 'display' | 'window' | 'region';
+    targetId?: string;
+    region?: CaptureRegion;
+    excludedApps?: string[];
+  }): Promise<ScreenCaptureResult> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<ScreenCaptureResult>('capture_screen', {
+        mode: options.mode,
+        targetId: options.targetId || null,
+        region: options.region || null,
+        excludedApps: options.excludedApps || null,
+      });
+    }
+
+    // Web fallback (returns a small blank 1x1 png or mock)
+    return {
+      success: true,
+      cancelled: false,
+      base64_image: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      data_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+      width: 1,
+      height: 1,
+      mime_type: 'image/png',
+      source_type: options.mode,
+      source_name: options.mode === 'window' ? 'Mock Window' : 'Mock Display',
+      file_size_bytes: 68,
+      error: null,
+    };
+  }
+
+  static async performOcr(imageBase64: string): Promise<OcrTextItem[]> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<OcrTextItem[]>('perform_ocr', { imageBase64 });
+    }
+    return [];
   }
 }
 

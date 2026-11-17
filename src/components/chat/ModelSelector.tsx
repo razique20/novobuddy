@@ -1,14 +1,18 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Cpu, ChevronDown, Check, AlertCircle, RefreshCw, ExternalLink } from 'lucide-react';
+import { Cpu, ChevronDown, Check, AlertCircle, RefreshCw, ExternalLink, Eye } from 'lucide-react';
 import { ProviderId, ModelInfo } from '../../services/ai/types';
 import { aiProviderManager } from '../../services/ai/AIProviderManager';
 import { useAppStore } from '../../stores/appStore';
 
 interface ModelSelectorProps {
   onConfigureClick?: () => void;
+  hasAttachment?: boolean;
 }
 
-export const ModelSelector: React.FC<ModelSelectorProps> = ({ onConfigureClick }) => {
+export const ModelSelector: React.FC<ModelSelectorProps> = ({
+  onConfigureClick,
+  hasAttachment,
+}) => {
   const [isOpen, setIsOpen] = useState(false);
   const [activeProvider, setActiveProvider] = useState<ProviderId>(
     aiProviderManager.getActiveProviderId()
@@ -102,6 +106,7 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ onConfigureClick }
 
   const currentProviderMeta = PROVIDERS.find((p) => p.id === activeProvider);
   const currentModelMeta = models.find((m) => m.id === activeModel);
+  const isCurrentVision = Boolean(currentModelMeta?.supportsVision);
 
   return (
     <div className="relative inline-block select-none" ref={dropdownRef}>
@@ -121,6 +126,24 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ onConfigureClick }
           <span className="text-text-secondary truncate max-w-[120px]">
             {currentModelMeta?.name || activeModel}
           </span>
+          {isCurrentVision && (
+            <span
+              title="Vision Enabled"
+              className="flex items-center gap-0.5 px-1 py-0.2 text-[9px] rounded bg-purple-500/20 text-purple-400 border border-purple-500/30"
+            >
+              <Eye className="w-2.5 h-2.5" />
+              Vision
+            </span>
+          )}
+          {hasAttachment && !isCurrentVision && (
+            <span
+              title="Selected model does not support images"
+              className="flex items-center gap-0.5 px-1.5 py-0.2 text-[9px] rounded bg-amber-500/20 text-amber-300 border border-amber-500/40 animate-pulse font-medium"
+            >
+              <AlertCircle className="w-2.5 h-2.5" />
+              No Vision
+            </span>
+          )}
         </div>
         <ChevronDown
           className={`w-3.5 h-3.5 text-text-muted transition-transform duration-200 ${
@@ -228,6 +251,12 @@ export const ModelSelector: React.FC<ModelSelectorProps> = ({ onConfigureClick }
                       <div className="truncate mr-2">
                         <div className="flex items-center gap-1.5">
                           <span className="truncate text-[11px] font-medium">{m.name}</span>
+                          {m.supportsVision && (
+                            <span className="flex items-center gap-0.5 text-[9px] px-1 py-0.2 rounded bg-purple-500/15 text-purple-400 font-mono">
+                              <Eye className="w-2.5 h-2.5" />
+                              Vision
+                            </span>
+                          )}
                           {isCloud ? (
                             <span className="text-[9px] px-1 py-0.2 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 font-mono">
                               Cloud

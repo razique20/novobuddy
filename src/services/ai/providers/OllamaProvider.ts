@@ -188,10 +188,17 @@ export class OllamaProvider extends BaseProvider {
       // ────────────────────────────────────────────────────────────────
       if (isTauriEnvironment()) {
         try {
-          const messages = request.messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          }));
+          const messages = request.messages.map((m) => {
+            const rawImages = (m.attachments || [])
+              .map((a) => a.dataUrl?.replace(/^data:image\/[a-z]+;base64,/, ''))
+              .filter((x): x is string => Boolean(x));
+
+            return {
+              role: m.role,
+              content: m.content,
+              ...(rawImages.length > 0 ? { images: rawImages } : {}),
+            };
+          });
 
           const fullText = await NativeBridge.streamOllamaChat(
             request.model,
@@ -218,10 +225,17 @@ export class OllamaProvider extends BaseProvider {
         },
         body: JSON.stringify({
           model: request.model,
-          messages: request.messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
+          messages: request.messages.map((m) => {
+            const rawImages = (m.attachments || [])
+              .map((a) => a.dataUrl?.replace(/^data:image\/[a-z]+;base64,/, ''))
+              .filter((x): x is string => Boolean(x));
+
+            return {
+              role: m.role,
+              content: m.content,
+              ...(rawImages.length > 0 ? { images: rawImages } : {}),
+            };
+          }),
           stream: true,
           options: {
             temperature: request.temperature ?? 0.7,

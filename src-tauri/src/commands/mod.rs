@@ -261,4 +261,45 @@ pub fn native_stream_chat(
     )
 }
 
+#[tauri::command]
+pub fn check_screen_permission() -> Result<crate::services::screen::ScreenPermissionStatus, String> {
+    crate::services::screen::ScreenCaptureService::check_permission()
+}
+
+#[tauri::command]
+pub fn request_screen_permission() -> Result<crate::services::screen::ScreenPermissionStatus, String> {
+    crate::services::screen::ScreenCaptureService::request_permission()
+}
+
+#[tauri::command]
+pub fn get_screen_displays() -> Result<Vec<crate::services::screen::ScreenDisplayInfo>, String> {
+    crate::services::screen::ScreenCaptureService::list_displays()
+}
+
+#[tauri::command]
+pub fn get_screen_windows() -> Result<Vec<crate::services::screen::ScreenWindowInfo>, String> {
+    crate::services::screen::ScreenCaptureService::list_windows()
+}
+
+#[tauri::command]
+pub fn capture_screen(
+    mode: String,
+    target_id: Option<String>,
+    region: Option<crate::services::screen::CaptureRegion>,
+    excluded_apps: Option<Vec<String>>,
+) -> Result<crate::services::screen::ScreenCaptureResult, String> {
+    crate::services::screen::ScreenCaptureService::capture_screen(
+        &mode,
+        target_id.as_deref(),
+        region,
+        excluded_apps,
+    )
+}
+
+#[tauri::command]
+pub fn perform_ocr(image_base64: String) -> Result<Vec<crate::services::screen::OcrTextItem>, String> {
+    crate::services::screen::ScreenCaptureService::perform_ocr(&image_base64)
+}
+
+
 

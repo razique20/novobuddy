@@ -1,4 +1,4 @@
-use crate::models::{AppSettings, Conversation, Message};
+use crate::models::{AppSettings, Conversation, Message, MessageAttachment};
 use chrono::Utc;
 use rusqlite::{params, Connection, Result};
 
@@ -34,6 +34,21 @@ impl DbService {
                 FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
             );
 
+            CREATE TABLE IF NOT EXISTS attachments (
+                id TEXT PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_name TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                width INTEGER NOT NULL,
+                height INTEGER NOT NULL,
+                file_size_bytes INTEGER NOT NULL,
+                data_url TEXT,
+                ocr_text TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+            );
+
             CREATE TABLE IF NOT EXISTS app_state (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
@@ -64,7 +79,7 @@ impl DbService {
                     "msg-1",
                     conv_id,
                     "assistant",
-                    "Hello! I am NOVA, your intelligent desktop companion. In Phase 1, our desktop foundation, window controls, and local persistence are active. How can I assist you today?",
+                    "Hello! I am NOVA, your intelligent desktop companion. Screen awareness, visual intelligence, and local persistence are active. How can I assist you today?",
                     now,
                     36,
                     1
@@ -102,6 +117,14 @@ impl DbService {
                     }
                 }
                 "telemetry_enabled" => settings.telemetry_enabled = value == "true",
+                "screen_capture_enabled" => settings.screen_capture_enabled = value == "true",
+                "excluded_applications" => {
+                    if let Ok(list) = serde_json::from_str::<Vec<String>>(&value) {
+                        settings.excluded_applications = list;
+                    }
+                }
+                "screenshot_retention_policy" => settings.screenshot_retention_policy = value,
+                "ocr_enabled" => settings.ocr_enabled = value == "true",
                 "onboarding_completed" => settings.onboarding_completed = value == "true",
                 _ => {}
             }
@@ -112,6 +135,9 @@ impl DbService {
 
     pub fn save_settings(conn: &Connection, settings: &AppSettings) -> Result<()> {
         let now = Utc::now().to_rfc3339();
+        let excluded_apps_json = serde_json::to_string(&settings.excluded_applications)
+            .unwrap_or_else(|_| "[]".to_string());
+
         let items = [
             ("launch_at_startup", settings.launch_at_startup.to_string()),
             ("start_minimized", settings.start_minimized.to_string()),
@@ -123,6 +149,10 @@ impl DbService {
             ("shortcut_enabled", settings.shortcut_enabled.to_string()),
             ("data_retention_days", settings.data_retention_days.to_string()),
             ("telemetry_enabled", settings.telemetry_enabled.to_string()),
+            ("screen_capture_enabled", settings.screen_capture_enabled.to_string()),
+            ("excluded_applications", excluded_apps_json),
+            ("screenshot_retention_policy", settings.screenshot_retention_policy.clone()),
+            ("ocr_enabled", settings.ocr_enabled.to_string()),
             ("onboarding_completed", settings.onboarding_completed.to_string()),
         ];
 
@@ -201,23 +231,72 @@ impl DbService {
              ORDER BY created_at ASC",
         )?;
 
-        let msg_iter = stmt.query_map(params![conversation_id], |row| {
+        let msg_rows = stmt.query_map(params![conversation_id], |row| {
             let is_simulated_int: i32 = row.get(6)?;
-            Ok(Message {
-                id: row.get(0)?,
-                conversation_id: row.get(1)?,
-                role: row.get(2)?,
-                content: row.get(3)?,
-                created_at: row.get(4)?,
-                tokens: row.get(5)?,
-                is_simulated: is_simulated_int != 0,
-            })
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, String>(3)?,
+                row.get::<_, String>(4)?,
+                row.get::<_, Option<i32>>(5)?,
+                is_simulated_int != 0,
+            ))
         })?;
 
-        let mut messages = Vec::new();
-        for msg in msg_iter {
-            messages.push(msg?);
+        let mut raw_msgs = Vec::new();
+        for r in msg_rows {
+            raw_msgs.push(r?);
         }
+
+        let mut messages = Vec::new();
+        let mut attach_stmt = conn.prepare(
+            "SELECT id, source_type, source_name, mime_type, width, height, file_size_bytes, data_url, ocr_text, created_at
+             FROM attachments
+             WHERE message_id = ?
+             ORDER BY created_at ASC",
+        )?;
+
+        for (id, conv_id, role, content, created_at, tokens, is_simulated) in raw_msgs {
+            let attach_iter = attach_stmt.query_map(params![&id], |row| {
+                let file_size: i64 = row.get(6)?;
+                Ok(MessageAttachment {
+                    id: row.get(0)?,
+                    source_type: row.get(1)?,
+                    source_name: row.get(2)?,
+                    mime_type: row.get(3)?,
+                    width: row.get::<_, u32>(4)?,
+                    height: row.get::<_, u32>(5)?,
+                    file_size_bytes: file_size as usize,
+                    data_url: row.get(7)?,
+                    ocr_text: row.get(8)?,
+                    created_at: row.get(9)?,
+                })
+            })?;
+
+            let mut attachments = Vec::new();
+            for a in attach_iter {
+                attachments.push(a?);
+            }
+
+            let attachments_opt = if attachments.is_empty() {
+                None
+            } else {
+                Some(attachments)
+            };
+
+            messages.push(Message {
+                id,
+                conversation_id: conv_id,
+                role,
+                content,
+                created_at,
+                tokens,
+                is_simulated,
+                attachments: attachments_opt,
+            });
+        }
+
         Ok(messages)
     }
 
@@ -237,6 +316,28 @@ impl DbService {
             ],
         )?;
 
+        if let Some(attachments) = &message.attachments {
+            let mut attach_stmt = conn.prepare(
+                "INSERT INTO attachments (id, message_id, source_type, source_name, mime_type, width, height, file_size_bytes, data_url, ocr_text, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            )?;
+            for a in attachments {
+                attach_stmt.execute(params![
+                    a.id,
+                    message.id,
+                    a.source_type,
+                    a.source_name,
+                    a.mime_type,
+                    a.width,
+                    a.height,
+                    a.file_size_bytes as i64,
+                    a.data_url,
+                    a.ocr_text,
+                    a.created_at,
+                ])?;
+            }
+        }
+
         // Update conversation updated_at
         conn.execute(
             "UPDATE conversations SET updated_at = ? WHERE id = ?",
@@ -249,6 +350,7 @@ impl DbService {
     pub fn clear_all_data(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "
+            DELETE FROM attachments;
             DELETE FROM messages;
             DELETE FROM conversations;
             DELETE FROM app_state;
@@ -320,6 +422,7 @@ mod tests {
             created_at: Utc::now().to_rfc3339(),
             tokens: Some(4),
             is_simulated: false,
+            attachments: None,
         };
 
         DbService::save_message(&conn, &msg).expect("failed to save message");
@@ -327,6 +430,38 @@ mod tests {
         let messages = DbService::get_messages(&conn, "test-conv-1").expect("failed to load msgs");
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "What is NOVA?");
+        assert!(messages[0].attachments.is_none());
+
+        // Test with attachment
+        let attach_msg = Message {
+            id: "msg-test-2".to_string(),
+            conversation_id: "test-conv-1".to_string(),
+            role: "user".to_string(),
+            content: "Look at this screenshot".to_string(),
+            created_at: Utc::now().to_rfc3339(),
+            tokens: Some(5),
+            is_simulated: false,
+            attachments: Some(vec![MessageAttachment {
+                id: "att-1".to_string(),
+                source_type: "display".to_string(),
+                source_name: "Display 1".to_string(),
+                mime_type: "image/png".to_string(),
+                width: 1920,
+                height: 1080,
+                file_size_bytes: 45000,
+                data_url: Some("data:image/png;base64,...".to_string()),
+                ocr_text: Some("Detected Text".to_string()),
+                created_at: Utc::now().to_rfc3339(),
+            }]),
+        };
+        DbService::save_message(&conn, &attach_msg).expect("failed to save message with attachment");
+
+        let messages_with_att = DbService::get_messages(&conn, "test-conv-1").expect("failed to load msgs");
+        assert_eq!(messages_with_att.len(), 2);
+        let loaded_att = messages_with_att[1].attachments.as_ref().expect("attachments should exist");
+        assert_eq!(loaded_att.len(), 1);
+        assert_eq!(loaded_att[0].source_name, "Display 1");
+        assert_eq!(loaded_att[0].ocr_text.as_deref(), Some("Detected Text"));
 
         DbService::delete_conversation(&conn, "test-conv-1").expect("failed to delete conv");
         let messages_after =

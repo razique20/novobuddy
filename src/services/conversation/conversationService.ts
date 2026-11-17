@@ -1,4 +1,4 @@
-import { Message } from '../../types';
+import { ImageAttachment, Message } from '../../types';
 import { NativeBridge } from '../native/bridge';
 import { aiProviderManager } from '../ai/AIProviderManager';
 import { ChatMessage } from '../ai/types';
@@ -8,7 +8,8 @@ export interface IConversationService {
     conversationId: string,
     content: string,
     onChunk?: (partial: string) => void,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    attachments?: ImageAttachment[]
   ): Promise<Message>;
 }
 
@@ -32,7 +33,8 @@ export class ConversationService implements IConversationService {
     conversationId: string,
     content: string,
     onChunk?: (partial: string) => void,
-    abortSignal?: AbortSignal
+    abortSignal?: AbortSignal,
+    attachments?: ImageAttachment[]
   ): Promise<Message> {
     const userMsgId = `usr-${Date.now()}`;
     const now = new Date().toISOString();
@@ -44,6 +46,7 @@ export class ConversationService implements IConversationService {
       content,
       created_at: now,
       is_simulated: false,
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
     };
 
     // 1. Persist user message to SQLite
@@ -61,6 +64,7 @@ export class ConversationService implements IConversationService {
     const chatContext: ChatMessage[] = existingMessages.map((m) => ({
       role: m.role as 'user' | 'assistant' | 'system',
       content: m.content,
+      attachments: m.attachments,
     }));
 
     // 3. Stream real response from active AI Provider

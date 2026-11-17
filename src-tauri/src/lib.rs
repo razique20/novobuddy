@@ -138,6 +138,12 @@ pub fn run() {
             stream_ollama_chat,
             native_http_request,
             native_stream_chat,
+            check_screen_permission,
+            request_screen_permission,
+            get_screen_displays,
+            get_screen_windows,
+            capture_screen,
+            perform_ocr,
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

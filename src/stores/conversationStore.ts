@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { Conversation, Message } from '../types';
+import { Conversation, ImageAttachment, Message } from '../types';
 import { NativeBridge } from '../services/native/bridge';
 import { conversationService } from '../services/conversation/conversationService';
 
@@ -18,7 +18,7 @@ interface ConversationState {
   createNewConversation: (customTitle?: string) => Promise<string>;
   renameConversation: (id: string, newTitle: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
-  sendMessage: (content: string) => Promise<void>;
+  sendMessage: (content: string, attachments?: ImageAttachment[]) => Promise<void>;
   regenerateResponse: () => Promise<void>;
   stopGeneration: () => void;
   clearActiveConversation: () => Promise<void>;
@@ -127,13 +127,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
-  sendMessage: async (content: string) => {
-    if (!content.trim() || get().isSending) return;
+  sendMessage: async (content: string, attachments?: ImageAttachment[]) => {
+    if ((!content.trim() && (!attachments || attachments.length === 0)) || get().isSending) return;
 
     let convId = get().activeConversationId;
     if (!convId) {
+      const previewText = content.trim() || 'Screen capture inquiry';
       const previewTitle =
-        content.length > 28 ? content.slice(0, 25) + '...' : content;
+        previewText.length > 28 ? previewText.slice(0, 25) + '...' : previewText;
       convId = await get().createNewConversation(previewTitle);
     }
 
@@ -141,9 +142,10 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       id: `usr-${Date.now()}`,
       conversation_id: convId,
       role: 'user',
-      content,
+      content: content.trim() || (attachments && attachments.length > 0 ? 'Analyze this screen capture' : ''),
       created_at: new Date().toISOString(),
       is_simulated: false,
+      attachments: attachments && attachments.length > 0 ? attachments : undefined,
     };
 
     const controller = new AbortController();
@@ -159,11 +161,12 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     try {
       const assistantMessage = await conversationService.sendMessage(
         convId,
-        content,
+        optimisticUserMessage.content,
         (partial) => {
           set({ streamingContent: partial });
         },
-        controller.signal
+        controller.signal,
+        attachments
       );
 
       set((state) => ({

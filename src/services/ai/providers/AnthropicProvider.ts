@@ -95,16 +95,40 @@ export class AnthropicProvider extends BaseProvider {
 
     // Anthropic requires system prompt separated from messages array
     let systemPrompt: string | undefined = undefined;
-    const conversationMessages: { role: 'user' | 'assistant'; content: string }[] = [];
+    const conversationMessages: { role: 'user' | 'assistant'; content: any }[] = [];
 
     for (const msg of request.messages) {
       if (msg.role === 'system') {
         systemPrompt = systemPrompt ? `${systemPrompt}\n${msg.content}` : msg.content;
       } else {
-        conversationMessages.push({
-          role: msg.role === 'assistant' ? 'assistant' : 'user',
-          content: msg.content,
-        });
+        if (msg.attachments && msg.attachments.length > 0) {
+          const contentBlocks: any[] = [];
+          for (const att of msg.attachments) {
+            if (att.dataUrl) {
+              const match = att.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+              if (match) {
+                contentBlocks.push({
+                  type: 'image',
+                  source: {
+                    type: 'base64',
+                    media_type: match[1],
+                    data: match[2],
+                  },
+                });
+              }
+            }
+          }
+          contentBlocks.push({ type: 'text', text: msg.content });
+          conversationMessages.push({
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: contentBlocks,
+          });
+        } else {
+          conversationMessages.push({
+            role: msg.role === 'assistant' ? 'assistant' : 'user',
+            content: msg.content,
+          });
+        }
       }
     }
 

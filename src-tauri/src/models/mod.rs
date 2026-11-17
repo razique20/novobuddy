@@ -20,8 +20,26 @@ pub struct AppSettings {
     pub data_retention_days: i32,
     pub telemetry_enabled: bool,
 
+    // Screen & Visual Privacy (Phase 3)
+    #[serde(default = "default_true")]
+    pub screen_capture_enabled: bool,
+    #[serde(default)]
+    pub excluded_applications: Vec<String>,
+    #[serde(default = "default_ephemeral")]
+    pub screenshot_retention_policy: String, // "ephemeral" | "session" | "30_days"
+    #[serde(default = "default_true")]
+    pub ocr_enabled: bool,
+
     // Onboarding
     pub onboarding_completed: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_ephemeral() -> String {
+    "ephemeral".to_string()
 }
 
 impl Default for AppSettings {
@@ -37,6 +55,14 @@ impl Default for AppSettings {
             shortcut_enabled: true,
             data_retention_days: 30,
             telemetry_enabled: false,
+            screen_capture_enabled: true,
+            excluded_applications: vec![
+                "Keychain Access".to_string(),
+                "1Password".to_string(),
+                "Bitwarden".to_string(),
+            ],
+            screenshot_retention_policy: "ephemeral".to_string(),
+            ocr_enabled: true,
             onboarding_completed: false,
         }
     }
@@ -52,6 +78,20 @@ pub struct Conversation {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MessageAttachment {
+    pub id: String,
+    pub source_type: String, // "display" | "window" | "region" | "upload"
+    pub source_name: String,
+    pub mime_type: String,
+    pub width: u32,
+    pub height: u32,
+    pub file_size_bytes: usize,
+    pub data_url: Option<String>,
+    pub ocr_text: Option<String>,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Message {
     pub id: String,
     pub conversation_id: String,
@@ -60,6 +100,8 @@ pub struct Message {
     pub created_at: String,
     pub tokens: Option<i32>,
     pub is_simulated: bool,
+    #[serde(default)]
+    pub attachments: Option<Vec<MessageAttachment>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

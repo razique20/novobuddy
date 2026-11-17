@@ -84,16 +84,33 @@ export class GeminiProvider extends BaseProvider {
 
     // Convert to Gemini contents format
     // Roles: 'user' and 'model'
-    const contents: { role: 'user' | 'model'; parts: { text: string }[] }[] = [];
+    const contents: { role: 'user' | 'model'; parts: any[] }[] = [];
     let systemInstruction: { parts: { text: string }[] } | undefined = undefined;
 
     for (const msg of request.messages) {
       if (msg.role === 'system') {
         systemInstruction = { parts: [{ text: msg.content }] };
       } else {
+        const parts: any[] = [];
+        if (msg.attachments && msg.attachments.length > 0) {
+          for (const att of msg.attachments) {
+            if (att.dataUrl) {
+              const match = att.dataUrl.match(/^data:([^;]+);base64,(.+)$/);
+              if (match) {
+                parts.push({
+                  inline_data: {
+                    mime_type: match[1],
+                    data: match[2],
+                  },
+                });
+              }
+            }
+          }
+        }
+        parts.push({ text: msg.content });
         contents.push({
           role: msg.role === 'assistant' ? 'model' : 'user',
-          parts: [{ text: msg.content }],
+          parts,
         });
       }
     }

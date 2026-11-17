@@ -7,16 +7,22 @@ import {
   Square,
   AlertCircle,
   Cpu,
+  Camera,
+  Crop,
 } from 'lucide-react';
 import { NativeBridge } from '../../services/native/bridge';
 import { conversationService } from '../../services/conversation/conversationService';
 import { useConversationStore } from '../../stores/conversationStore';
 import { aiProviderManager } from '../../services/ai/AIProviderManager';
 import { NovaLogo } from '../../components/common/NovaLogo';
+import { ImageAttachment } from '../../types';
+import { ScreenContextService } from '../../services/screen/ScreenContextService';
 
 export const FloatingAssistant: React.FC = () => {
   const [prompt, setPrompt] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [attachment, setAttachment] = useState<ImageAttachment | null>(null);
+  const [isCapturing, setIsCapturing] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
@@ -51,12 +57,42 @@ export const FloatingAssistant: React.FC = () => {
     }
   };
 
+  const handleCaptureScreen = async () => {
+    setIsCapturing(true);
+    try {
+      const att = await ScreenContextService.captureScreen({ mode: 'display', runOcr: true });
+      if (att) {
+        setAttachment(att);
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Screen capture failed');
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  const handleCaptureRegion = async () => {
+    setIsCapturing(true);
+    try {
+      const att = await ScreenContextService.captureScreen({ mode: 'region', runOcr: true });
+      if (att) {
+        setAttachment(att);
+      }
+    } catch (err: any) {
+      setErrorMessage(err?.message || 'Region capture failed');
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
   const handleSubmit = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!prompt.trim() || isProcessing) return;
+    if ((!prompt.trim() && !attachment) || isProcessing) return;
 
-    const query = prompt.trim();
+    const query = prompt.trim() || 'Analyze this screen capture';
+    const currentAtt = attachment;
     setPrompt('');
+    setAttachment(null);
     setIsProcessing(true);
     setStatusMessage('');
     setErrorMessage(null);
@@ -75,7 +111,8 @@ export const FloatingAssistant: React.FC = () => {
         (partial) => {
           setStatusMessage(partial);
         },
-        controller.signal
+        controller.signal,
+        currentAtt ? [currentAtt] : undefined
       );
 
       setStatusMessage(reply.content);
@@ -152,39 +189,89 @@ export const FloatingAssistant: React.FC = () => {
           </div>
         </div>
 
-        {/* Input Form */}
-        <form onSubmit={handleSubmit} className="relative flex items-center">
-          <input
-            ref={inputRef}
-            type="text"
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder={`Ask NOVA (${activeModel})...`}
-            disabled={isProcessing}
-            className="w-full h-11 pl-3.5 pr-20 bg-background-card border border-border focus:border-primary rounded-xl text-xs text-text-primary placeholder:text-text-muted outline-none transition-all shadow-sm"
-          />
+        {/* Attachment Pill if captured */}
+        {attachment && (
+          <div className="flex items-center justify-between px-2.5 py-1 rounded-xl bg-primary/15 border border-primary/30 text-xs text-text-primary animate-fade-in">
+            <div className="flex items-center gap-2 truncate">
+              {attachment.dataUrl && (
+                <img
+                  src={attachment.dataUrl}
+                  alt="Capture"
+                  className="w-6 h-4 rounded object-cover border border-white/20"
+                />
+              )}
+              <span className="text-[11px] font-medium truncate">{attachment.sourceName}</span>
+              <span className="text-[10px] text-text-muted">({attachment.width}×{attachment.height})</span>
+            </div>
+            <button
+              onClick={() => setAttachment(null)}
+              className="p-0.5 rounded-full hover:bg-white/10 text-text-muted hover:text-red-400 cursor-pointer"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
 
-          <div className="absolute right-2 flex items-center gap-1.5">
-            {isProcessing ? (
-              <button
-                type="button"
-                onClick={handleStop}
-                title="Stop generation"
-                className="px-2 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white flex items-center gap-1 text-[11px] font-medium transition-all cursor-pointer shadow-sm animate-pulse"
-              >
-                <Square className="w-2.5 h-2.5 fill-current" />
-                <span>Stop</span>
-              </button>
-            ) : (
-              prompt.trim() && (
+        {/* Input Form */}
+        <form onSubmit={handleSubmit} className="relative flex items-center gap-1.5">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleCaptureScreen}
+              disabled={isCapturing || isProcessing}
+              title="Quick Capture Screen"
+              className="w-9 h-11 rounded-xl bg-background-card border border-border hover:border-primary/50 text-text-muted hover:text-primary flex items-center justify-center transition-all cursor-pointer shadow-sm"
+            >
+              <Camera className={`w-4 h-4 ${isCapturing ? 'animate-spin text-primary' : ''}`} />
+            </button>
+            <button
+              type="button"
+              onClick={handleCaptureRegion}
+              disabled={isCapturing || isProcessing}
+              title="Select Region"
+              className="w-9 h-11 rounded-xl bg-background-card border border-border hover:border-primary/50 text-text-muted hover:text-primary flex items-center justify-center transition-all cursor-pointer shadow-sm"
+            >
+              <Crop className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="relative flex-1 flex items-center">
+            <input
+              ref={inputRef}
+              type="text"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              placeholder={
+                attachment
+                  ? 'Ask about this screenshot...'
+                  : `Ask NOVA (${activeModel})...`
+              }
+              disabled={isProcessing}
+              className="w-full h-11 pl-3.5 pr-14 bg-background-card border border-border focus:border-primary rounded-xl text-xs text-text-primary placeholder:text-text-muted outline-none transition-all shadow-sm"
+            />
+
+            <div className="absolute right-2 flex items-center gap-1.5">
+              {isProcessing ? (
                 <button
-                  type="submit"
-                  className="w-7 h-7 rounded-lg bg-primary hover:bg-primary-hover text-white flex items-center justify-center transition-all cursor-pointer shadow-sm"
+                  type="button"
+                  onClick={handleStop}
+                  title="Stop generation"
+                  className="px-2 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white flex items-center gap-1 text-[11px] font-medium transition-all cursor-pointer shadow-sm animate-pulse"
                 >
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  <Square className="w-2.5 h-2.5 fill-current" />
+                  <span>Stop</span>
                 </button>
-              )
-            )}
+              ) : (
+                (prompt.trim() || attachment) && (
+                  <button
+                    type="submit"
+                    className="w-7 h-7 rounded-lg bg-primary hover:bg-primary-hover text-white flex items-center justify-center transition-all cursor-pointer shadow-sm"
+                  >
+                    <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                )
+              )}
+            </div>
           </div>
         </form>
 

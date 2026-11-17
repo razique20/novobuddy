@@ -22,6 +22,10 @@ const DEFAULT_SETTINGS: ApplicationSettings = {
   shortcut_enabled: true,
   data_retention_days: 30,
   telemetry_enabled: false,
+  screen_capture_enabled: true,
+  excluded_applications: ['Keychain Access', '1Password', 'Bitwarden'],
+  screenshot_retention_policy: 'ephemeral',
+  ocr_enabled: true,
   onboarding_completed: false,
 };
 

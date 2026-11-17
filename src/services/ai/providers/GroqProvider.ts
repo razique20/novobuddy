@@ -140,10 +140,21 @@ export class GroqProvider extends BaseProvider {
 
     const payloadData: Record<string, any> = {
       model: request.model || 'openai/gpt-oss-120b',
-      messages: request.messages.map((m) => ({
-        role: m.role,
-        content: m.content,
-      })),
+      messages: request.messages.map((m) => {
+        if (m.attachments && m.attachments.length > 0) {
+          const content: any[] = [{ type: 'text', text: m.content }];
+          for (const att of m.attachments) {
+            if (att.dataUrl) {
+              content.push({
+                type: 'image_url',
+                image_url: { url: att.dataUrl },
+              });
+            }
+          }
+          return { role: m.role, content };
+        }
+        return { role: m.role, content: m.content };
+      }),
       stream: true,
       temperature: request.temperature ?? 0.7,
     };

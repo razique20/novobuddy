@@ -14,10 +14,13 @@ export type SettingsSection =
   | 'appearance'
   | 'shortcuts'
   | 'privacy'
+  | 'screen_privacy'
   | 'providers'
   | 'about';
 
 export type ThemeMode = 'dark' | 'light' | 'system';
+
+export type ScreenshotRetentionPolicy = 'ephemeral' | 'session' | '30_days';
 
 export interface ApplicationSettings {
   launch_at_startup: boolean;
@@ -30,7 +33,95 @@ export interface ApplicationSettings {
   shortcut_enabled: boolean;
   data_retention_days: number;
   telemetry_enabled: boolean;
+  // Screen & Visual Privacy (Phase 3)
+  screen_capture_enabled?: boolean;
+  excluded_applications?: string[];
+  screenshot_retention_policy?: ScreenshotRetentionPolicy;
+  ocr_enabled?: boolean;
   onboarding_completed: boolean;
+}
+
+export type CaptureSourceType = 'display' | 'window' | 'region' | 'upload';
+
+export interface VisualAnnotation {
+  id: string;
+  label: string;
+  box: {
+    x: number; // 0.0 - 1.0 normalized
+    y: number; // 0.0 - 1.0 normalized
+    width: number; // 0.0 - 1.0 normalized
+    height: number; // 0.0 - 1.0 normalized
+  };
+  confidence?: number;
+  color?: string;
+}
+
+export interface ImageAttachment {
+  id: string;
+  sourceType: CaptureSourceType;
+  sourceName: string;
+  mimeType: string;
+  width: number;
+  height: number;
+  fileSizeBytes: number;
+  dataUrl?: string;
+  ocrText?: string;
+  annotations?: VisualAnnotation[];
+  createdAt: string;
+}
+
+export interface ScreenPermissionStatus {
+  has_permission: boolean;
+  message: string;
+}
+
+export interface ScreenDisplayInfo {
+  id: number;
+  index: number;
+  name: string;
+  is_main: boolean;
+  width: number;
+  height: number;
+}
+
+export interface ScreenWindowInfo {
+  id: number;
+  app_name: string;
+  title: string;
+  pid: number;
+  width: number;
+  height: number;
+  is_excluded?: boolean;
+}
+
+export interface CaptureRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ScreenCaptureResult {
+  success: boolean;
+  cancelled: boolean;
+  base64_image?: string | null;
+  data_url?: string | null;
+  width: number;
+  height: number;
+  mime_type: string;
+  source_type: string;
+  source_name: string;
+  file_size_bytes: number;
+  error?: string | null;
+}
+
+export interface OcrTextItem {
+  text: string;
+  confidence: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 }
 
 export interface Conversation {
@@ -49,6 +140,7 @@ export interface Message {
   created_at: string;
   tokens?: number;
   is_simulated: boolean;
+  attachments?: ImageAttachment[];
 }
 
 export interface SystemStatus {

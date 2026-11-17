@@ -15,10 +15,21 @@ import {
   Check,
   Edit2,
   Trash,
+  Camera,
+  Monitor,
+  AppWindow,
+  Crop,
+  Maximize2,
 } from 'lucide-react';
 import { useConversationStore } from '../../stores/conversationStore';
 import { ModelSelector } from '../../components/chat/ModelSelector';
 import { MarkdownContent } from '../../components/chat/MarkdownContent';
+import { ImageAttachment, ScreenWindowInfo } from '../../types';
+import { ScreenContextService } from '../../services/screen/ScreenContextService';
+import { ImageAttachmentPreview } from '../../components/screen/ImageAttachmentPreview';
+import { WindowPickerModal } from '../../components/screen/WindowPickerModal';
+import { ImageViewerModal } from '../../components/screen/ImageViewerModal';
+import { PermissionGuideModal } from '../../components/screen/PermissionGuideModal';
 
 export const AssistantPage: React.FC = () => {
   const [input, setInput] = useState('');
@@ -28,8 +39,21 @@ export const AssistantPage: React.FC = () => {
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [confirmClearActive, setConfirmClearActive] = useState(false);
 
+  // Screen Capture States
+  const [currentAttachment, setCurrentAttachment] = useState<ImageAttachment | null>(null);
+  const [selectedViewerAttachment, setSelectedViewerAttachment] = useState<ImageAttachment | null>(null);
+  const [isCapturing, setIsCapturing] = useState(false);
+  const [captureMenuOpen, setCaptureMenuOpen] = useState(false);
+  const [windowPickerOpen, setWindowPickerOpen] = useState(false);
+  const [windowsList, setWindowsList] = useState<ScreenWindowInfo[]>([]);
+  const [isLoadingWindows, setIsLoadingWindows] = useState(false);
+  const [permissionModalOpen, setPermissionModalOpen] = useState(false);
+  const [lastCaptureMode, setLastCaptureMode] = useState<'display' | 'window' | 'region'>('display');
+  const [lastWindowTarget, setLastWindowTarget] = useState<ScreenWindowInfo | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const captureMenuRef = useRef<HTMLDivElement>(null);
 
   const {
     conversations,
@@ -70,16 +94,145 @@ export const AssistantPage: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isSending, stopGeneration]);
 
+  // Global shortcut for screen capture (Cmd+Shift+S)
+  useEffect(() => {
+    const handleCaptureShortcut = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.shiftKey && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        setCaptureMenuOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleCaptureShortcut);
+    return () => window.removeEventListener('keydown', handleCaptureShortcut);
+  }, []);
+
+  // Close capture menu on click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (captureMenuRef.current && !captureMenuRef.current.contains(e.target as Node)) {
+        setCaptureMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const ensurePermission = async (): Promise<boolean> => {
+    try {
+      const status = await ScreenContextService.checkPermission();
+      if (!status.has_permission) {
+        setPermissionModalOpen(true);
+        return false;
+      }
+      return true;
+    } catch {
+      return true;
+    }
+  };
+
+  const handleCaptureFullScreen = async () => {
+    setCaptureMenuOpen(false);
+    if (!(await ensurePermission())) return;
+
+    setIsCapturing(true);
+    setLastCaptureMode('display');
+    try {
+      const att = await ScreenContextService.captureScreen({ mode: 'display', runOcr: true });
+      if (att) {
+        setCurrentAttachment(att);
+      }
+    } catch (e: any) {
+      console.error('Screen capture failed:', e);
+      if (e?.message?.includes('permission')) {
+        setPermissionModalOpen(true);
+      }
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  const handleOpenWindowPicker = async () => {
+    setCaptureMenuOpen(false);
+    if (!(await ensurePermission())) return;
+
+    setWindowPickerOpen(true);
+    setIsLoadingWindows(true);
+    try {
+      const list = await ScreenContextService.getWindows();
+      setWindowsList(list);
+    } catch (e) {
+      console.error('Failed to get windows:', e);
+    } finally {
+      setIsLoadingWindows(false);
+    }
+  };
+
+  const handleSelectWindow = async (win: ScreenWindowInfo) => {
+    setWindowPickerOpen(false);
+    setIsCapturing(true);
+    setLastCaptureMode('window');
+    setLastWindowTarget(win);
+    try {
+      const att = await ScreenContextService.captureScreen({
+        mode: 'window',
+        targetId: String(win.id),
+        runOcr: true,
+      });
+      if (att) {
+        att.sourceName = `Window: ${win.app_name}`;
+        setCurrentAttachment(att);
+      }
+    } catch (e: any) {
+      console.error('Window capture failed:', e);
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  const handleCaptureRegion = async () => {
+    setCaptureMenuOpen(false);
+    if (!(await ensurePermission())) return;
+
+    setIsCapturing(true);
+    setLastCaptureMode('region');
+    try {
+      const att = await ScreenContextService.captureScreen({ mode: 'region', runOcr: true });
+      if (att) {
+        setCurrentAttachment(att);
+      }
+    } catch (e: any) {
+      console.error('Region capture failed:', e);
+    } finally {
+      setIsCapturing(false);
+    }
+  };
+
+  const handleRecapture = () => {
+    if (lastCaptureMode === 'window' && lastWindowTarget) {
+      handleSelectWindow(lastWindowTarget);
+    } else if (lastCaptureMode === 'region') {
+      handleCaptureRegion();
+    } else {
+      handleCaptureFullScreen();
+    }
+  };
+
+  const handleRemoveAttachment = () => {
+    setCurrentAttachment(null);
+  };
+
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    if (!input.trim() || isSending) return;
+    if ((!input.trim() && !currentAttachment) || isSending) return;
 
     const text = input.trim();
+    const attToSend = currentAttachment;
     setInput('');
+    setCurrentAttachment(null);
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
     }
-    await sendMessage(text);
+    await sendMessage(text, attToSend ? [attToSend] : undefined);
   };
 
   const handleCopyMessage = async (id: string, content: string) => {
@@ -254,7 +407,7 @@ export const AssistantPage: React.FC = () => {
 
           {/* Model Selector & Actions */}
           <div className="flex items-center gap-2.5">
-            <ModelSelector />
+            <ModelSelector hasAttachment={Boolean(currentAttachment)} />
 
             {/* Clear Conversation Button */}
             {messages.length > 0 && (
@@ -391,6 +544,37 @@ export const AssistantPage: React.FC = () => {
                   )}
 
                   <div className="max-w-[82%] space-y-1.5">
+                    {/* Render message attachments if present */}
+                    {m.attachments && m.attachments.length > 0 && (
+                      <div className="flex flex-wrap gap-2 mb-1.5">
+                        {m.attachments.map((att) => (
+                          <div
+                            key={att.id}
+                            onClick={() => setSelectedViewerAttachment(att)}
+                            className="relative group/att cursor-pointer rounded-xl overflow-hidden border border-border/80 bg-black/40 shadow-sm hover:border-primary/50 transition-all"
+                            title="Click to view full image and annotations"
+                          >
+                            <img
+                              src={att.dataUrl}
+                              alt={att.sourceName}
+                              className="max-h-44 max-w-xs object-cover rounded-xl transition-transform group-hover/att:scale-102"
+                            />
+                            <div className="absolute inset-0 bg-black/30 opacity-0 group-hover/att:opacity-100 flex items-center justify-center transition-opacity">
+                              <Maximize2 className="w-4 h-4 text-white drop-shadow" />
+                            </div>
+                            <div className="absolute bottom-1 left-1 right-1 px-1.5 py-0.5 rounded bg-black/70 backdrop-blur-xs text-[9px] text-white/90 truncate flex items-center justify-between">
+                              <span className="truncate">{att.sourceName}</span>
+                              {att.ocrText && (
+                                <span className="text-[8px] bg-primary/40 text-primary-light px-1 rounded ml-1">
+                                  OCR
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
                     <div
                       className={`p-3.5 rounded-2xl text-xs leading-relaxed ${
                         isAssistant
@@ -485,14 +669,83 @@ export const AssistantPage: React.FC = () => {
 
         {/* Message Composer */}
         <div className="p-3 border-t border-border/50 bg-background-card/30">
+          {/* Active Attachment Preview Card */}
+          {currentAttachment && (
+            <div className="mb-2">
+              <ImageAttachmentPreview
+                attachment={currentAttachment}
+                onRemove={handleRemoveAttachment}
+                onRecapture={handleRecapture}
+                onExpand={() => setSelectedViewerAttachment(currentAttachment)}
+              />
+            </div>
+          )}
+
           <form onSubmit={handleSend} className="relative flex flex-col gap-2">
             <div className="relative flex items-center">
+              {/* Screen Capture Trigger Button & Dropdown */}
+              <div className="relative flex-shrink-0 mr-1.5" ref={captureMenuRef}>
+                <button
+                  type="button"
+                  onClick={() => setCaptureMenuOpen(!captureMenuOpen)}
+                  disabled={isCapturing || isSending}
+                  title="Capture screen / window (Cmd+Shift+S)"
+                  className={`w-9 h-9 rounded-xl border transition-all flex items-center justify-center cursor-pointer shadow-sm ${
+                    currentAttachment
+                      ? 'bg-primary/20 text-primary border-primary/50'
+                      : 'bg-background-card hover:bg-white/5 border-border text-text-muted hover:text-text-primary'
+                  }`}
+                >
+                  <Camera className={`w-4 h-4 ${isCapturing ? 'animate-spin text-primary' : ''}`} />
+                </button>
+
+                {captureMenuOpen && (
+                  <div className="absolute bottom-full left-0 mb-2 w-56 rounded-2xl nova-glass-card border border-border/80 p-1.5 shadow-2xl z-40 text-xs animate-fade-in">
+                    <div className="px-2.5 py-1 text-[10px] font-semibold text-text-muted uppercase tracking-wider">
+                      Screen Awareness
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleCaptureFullScreen}
+                      className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-white/5 text-left text-text-primary transition-colors cursor-pointer"
+                    >
+                      <Monitor className="w-3.5 h-3.5 text-primary" />
+                      <div className="min-w-0">
+                        <div className="font-medium text-[11px]">Full Screen</div>
+                        <div className="text-[9px] text-text-muted">Entire display screenshot</div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleOpenWindowPicker}
+                      className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-white/5 text-left text-text-primary transition-colors cursor-pointer"
+                    >
+                      <AppWindow className="w-3.5 h-3.5 text-secondary" />
+                      <div className="min-w-0">
+                        <div className="font-medium text-[11px]">Application Window</div>
+                        <div className="text-[9px] text-text-muted">Select specific app window</div>
+                      </div>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleCaptureRegion}
+                      className="w-full flex items-center gap-2 px-2.5 py-2 rounded-xl hover:bg-white/5 text-left text-text-primary transition-colors cursor-pointer"
+                    >
+                      <Crop className="w-3.5 h-3.5 text-accent" />
+                      <div className="min-w-0">
+                        <div className="font-medium text-[11px]">Select Region</div>
+                        <div className="text-[9px] text-text-muted">Interactive crosshairs selection</div>
+                      </div>
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <textarea
                 ref={textareaRef}
                 value={input}
                 onChange={(e) => {
                   setInput(e.target.value);
-                  // auto-expand height
                   e.target.style.height = 'auto';
                   e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
                 }}
@@ -503,9 +756,13 @@ export const AssistantPage: React.FC = () => {
                   }
                 }}
                 rows={1}
-                placeholder="Ask NOVA anything (Enter to send, Shift+Enter for new line)..."
+                placeholder={
+                  currentAttachment
+                    ? 'Ask a question about this screen capture...'
+                    : 'Ask NOVA anything (Enter to send, Cmd+Shift+S for screen)...'
+                }
                 disabled={isSending}
-                className="w-full pl-3.5 pr-24 py-3 bg-background-card border border-border focus:border-primary/70 rounded-xl text-xs text-text-primary placeholder:text-text-muted outline-none transition-all resize-none shadow-sm max-h-36"
+                className="w-full pl-3.5 pr-24 py-2.5 bg-background-card border border-border focus:border-primary/70 rounded-xl text-xs text-text-primary placeholder:text-text-muted outline-none transition-all resize-none shadow-sm max-h-36"
               />
 
               <div className="absolute right-2.5 flex items-center gap-1.5">
@@ -529,7 +786,7 @@ export const AssistantPage: React.FC = () => {
 
                     <button
                       type="submit"
-                      disabled={!input.trim()}
+                      disabled={!input.trim() && !currentAttachment}
                       className="w-8 h-8 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-30 text-white flex items-center justify-center transition-all cursor-pointer shadow-sm"
                     >
                       <Send className="w-3.5 h-3.5" />
@@ -541,12 +798,33 @@ export const AssistantPage: React.FC = () => {
 
             {/* Helper footer */}
             <div className="flex items-center justify-between px-1 text-[10px] text-text-muted">
-              <span>Enter sends • Shift+Enter new line</span>
-              <span>Local SQLite history active</span>
+              <span>Enter sends • Shift+Enter new line • Cmd+Shift+S screenshot</span>
+              <span>Screen Awareness Active</span>
             </div>
           </form>
         </div>
       </div>
+
+      {/* Screen Modals */}
+      <WindowPickerModal
+        isOpen={windowPickerOpen}
+        windows={windowsList}
+        isLoading={isLoadingWindows}
+        onSelect={handleSelectWindow}
+        onRefresh={handleOpenWindowPicker}
+        onClose={() => setWindowPickerOpen(false)}
+      />
+
+      <ImageViewerModal
+        attachment={selectedViewerAttachment}
+        onClose={() => setSelectedViewerAttachment(null)}
+      />
+
+      <PermissionGuideModal
+        isOpen={permissionModalOpen}
+        onClose={() => setPermissionModalOpen(false)}
+        onPermissionGranted={() => handleRecapture()}
+      />
     </div>
   );
 };
