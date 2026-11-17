@@ -5,6 +5,7 @@ import {
   ShortcutStatus,
   SystemStatus,
 } from '../../types';
+import { OllamaInstalledModel, OllamaInstallationStatus } from '../ai/types';
 
 // Check if running inside Tauri webview
 export const isTauriEnvironment = (): boolean => {
@@ -51,8 +52,13 @@ let fallbackMessages: Record<string, Message[]> = {
     },
   ],
 };
+const fallbackKeyStore: Record<string, string> = {};
 
 export class NativeBridge {
+  static isTauri(): boolean {
+    return isTauriEnvironment();
+  }
+
   static async getAppSettings(): Promise<ApplicationSettings> {
     if (isTauriEnvironment()) {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -190,5 +196,191 @@ export class NativeBridge {
       is_registered: true,
       description: 'Global toggle for NOVA Floating Companion',
     };
+  }
+
+  static async updateConversationTitle(id: string, title: string): Promise<void> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('update_conversation_title', { id, title });
+    } else {
+      const conv = fallbackConversations.find((c) => c.id === id);
+      if (conv) {
+        conv.title = title;
+        conv.updated_at = new Date().toISOString();
+      }
+    }
+  }
+
+  static async storeApiKey(provider: string, key: string): Promise<void> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('store_api_key', { provider, key });
+    } else {
+      fallbackKeyStore[provider] = key;
+    }
+  }
+
+  static async getApiKey(provider: string): Promise<string | null> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<string | null>('get_api_key', { provider });
+    }
+    return fallbackKeyStore[provider] || null;
+  }
+
+  static async deleteApiKey(provider: string): Promise<void> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('delete_api_key', { provider });
+    } else {
+      delete fallbackKeyStore[provider];
+    }
+  }
+
+  static async hasApiKey(provider: string): Promise<boolean> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<boolean>('has_api_key', { provider });
+    }
+    return !!fallbackKeyStore[provider];
+  }
+
+  static async getOllamaInstalledModels(endpoint?: string): Promise<OllamaInstalledModel[]> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<OllamaInstalledModel[]>('get_ollama_installed_models', { endpoint });
+    }
+    // Web fallback using fetch
+    try {
+      const ep = (endpoint || 'http://localhost:11434').replace(/\/+$/, '');
+      const res = await fetch(`${ep}/api/tags`);
+      if (res.ok) {
+        const data = await res.json();
+        return (data.models || []).map((m: any) => ({
+          name: m.name || m.model,
+          size: m.size || 0,
+          size_formatted: m.size ? `${(m.size / (1024 * 1024)).toFixed(0)} MB` : 'Installed',
+          modified_at: m.modified_at || 'Recently',
+          digest: m.digest || '',
+        }));
+      }
+    } catch {
+      // ignore
+    }
+    return [];
+  }
+
+  static async getOllamaInstallationStatus(endpoint?: string): Promise<OllamaInstallationStatus> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<OllamaInstallationStatus>('get_ollama_installation_status', { endpoint });
+    }
+    // Web fallback
+    try {
+      const ep = (endpoint || 'http://localhost:11434').replace(/\/+$/, '');
+      const res = await fetch(`${ep}/api/version`);
+      if (res.ok) {
+        const data = await res.json();
+        return {
+          is_installed: true,
+          is_running: true,
+          version: data.version,
+          endpoint: ep,
+          message: `Ollama server is active (v${data.version})`,
+        };
+      }
+    } catch {
+      // ignore
+    }
+    return {
+      is_installed: false,
+      is_running: false,
+      endpoint: endpoint || 'http://localhost:11434',
+      message: 'Ollama is offline or not installed.',
+    };
+  }
+
+  static async pullOllamaModel(model: string): Promise<string> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<string>('pull_ollama_model', { model });
+    }
+    return `Model ${model} pull initiated.`;
+  }
+
+  static async deleteOllamaModel(model: string): Promise<string> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<string>('delete_ollama_model', { model });
+    }
+    return `Model ${model} deleted.`;
+  }
+
+  static async startOllamaServer(): Promise<string> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<string>('start_ollama_server');
+    }
+    return 'Ollama server command executed.';
+  }
+
+  static async stopOllamaServer(): Promise<string> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      return await invoke<string>('stop_ollama_server');
+    }
+    return 'Ollama server stopped.';
+  }
+
+  /**
+   * Stream Ollama chat completion through native Tauri IPC.
+   * Completely bypasses WKWebView fetch/CORS/ATS restrictions.
+   * @param model - The Ollama model to use (e.g. "smollm:135m")
+   * @param messages - Array of { role, content } chat messages
+   * @param onToken - Callback fired for each streamed token
+   * @param endpoint - Optional Ollama endpoint URL
+   * @returns Promise that resolves with the full accumulated text
+   */
+  static async streamOllamaChat(
+    model: string,
+    messages: Array<{ role: string; content: string }>,
+    onToken: (token: string) => void,
+    endpoint?: string
+  ): Promise<string> {
+    if (!isTauriEnvironment()) {
+      throw new Error('streamOllamaChat requires Tauri native environment');
+    }
+
+    const { invoke, Channel } = await import('@tauri-apps/api/core');
+    const messagesJson = JSON.stringify(messages);
+
+    return new Promise<string>((resolve, reject) => {
+      let accumulated = '';
+
+      const onChunk = new Channel<string>();
+      onChunk.onmessage = (chunk: string) => {
+        if (chunk === '__DONE__') {
+          resolve(accumulated);
+          return;
+        }
+        if (chunk.startsWith('__ERROR__:')) {
+          const errorMsg = chunk.slice('__ERROR__:'.length);
+          reject(new Error(errorMsg));
+          return;
+        }
+        // Normal token
+        accumulated += chunk;
+        onToken(chunk);
+      };
+
+      invoke('stream_ollama_chat', {
+        endpoint: endpoint || null,
+        model,
+        messagesJson,
+        onChunk,
+      }).catch((err: any) => {
+        reject(new Error(typeof err === 'string' ? err : err?.message || 'Native stream failed'));
+      });
+    });
   }
 }

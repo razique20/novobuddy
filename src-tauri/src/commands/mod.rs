@@ -151,3 +151,83 @@ pub fn get_shortcut_status(state: State<'_, AppState>) -> Result<ShortcutStatus,
         description: "Global toggle for NOVA Floating Companion".to_string(),
     })
 }
+
+#[tauri::command]
+pub fn update_conversation_title(
+    id: String,
+    title: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let conn = state.db.lock().map_err(|e| e.to_string())?;
+    DbService::update_conversation_title(&conn, &id, &title).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn store_api_key(provider: String, key: String) -> Result<(), String> {
+    crate::services::keychain::KeychainService::store_secret(&provider, &key)
+}
+
+#[tauri::command]
+pub fn get_api_key(provider: String) -> Result<Option<String>, String> {
+    crate::services::keychain::KeychainService::get_secret(&provider)
+}
+
+#[tauri::command]
+pub fn delete_api_key(provider: String) -> Result<(), String> {
+    crate::services::keychain::KeychainService::delete_secret(&provider)
+}
+
+#[tauri::command]
+pub fn has_api_key(provider: String) -> Result<bool, String> {
+    crate::services::keychain::KeychainService::has_secret(&provider)
+}
+
+#[tauri::command]
+pub fn get_ollama_installation_status(
+    endpoint: Option<String>,
+) -> Result<crate::services::ollama::OllamaInstallationStatus, String> {
+    Ok(crate::services::ollama::OllamaService::get_installation_status(endpoint.as_deref()))
+}
+
+#[tauri::command]
+pub fn get_ollama_installed_models(
+    endpoint: Option<String>,
+) -> Result<Vec<crate::services::ollama::OllamaModelDetails>, String> {
+    crate::services::ollama::OllamaService::list_installed_models(endpoint.as_deref())
+}
+
+#[tauri::command]
+pub fn pull_ollama_model(model: String) -> Result<String, String> {
+    crate::services::ollama::OllamaService::pull_model(&model)
+}
+
+#[tauri::command]
+pub fn delete_ollama_model(model: String) -> Result<String, String> {
+    crate::services::ollama::OllamaService::delete_model(&model)
+}
+
+#[tauri::command]
+pub fn start_ollama_server() -> Result<String, String> {
+    crate::services::ollama::OllamaService::start_server()
+}
+
+#[tauri::command]
+pub fn stop_ollama_server() -> Result<String, String> {
+    crate::services::ollama::OllamaService::stop_server()
+}
+
+#[tauri::command]
+pub fn stream_ollama_chat(
+    endpoint: Option<String>,
+    model: String,
+    messages_json: String,
+    on_chunk: tauri::ipc::Channel<String>,
+) -> Result<(), String> {
+    crate::services::ollama::OllamaService::stream_chat(
+        endpoint.as_deref(),
+        &model,
+        &messages_json,
+        &on_chunk,
+    )
+}
+

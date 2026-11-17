@@ -184,6 +184,15 @@ impl DbService {
         Ok(())
     }
 
+    pub fn update_conversation_title(conn: &Connection, id: &str, title: &str) -> Result<()> {
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?",
+            params![title, now, id],
+        )?;
+        Ok(())
+    }
+
     pub fn get_messages(conn: &Connection, conversation_id: &str) -> Result<Vec<Message>> {
         let mut stmt = conn.prepare(
             "SELECT id, conversation_id, role, content, created_at, tokens, is_simulated

@@ -124,6 +124,18 @@ pub fn run() {
             open_main_window,
             get_system_status,
             get_shortcut_status,
+            update_conversation_title,
+            store_api_key,
+            get_api_key,
+            delete_api_key,
+            has_api_key,
+            get_ollama_installation_status,
+            get_ollama_installed_models,
+            pull_ollama_model,
+            delete_ollama_model,
+            start_ollama_server,
+            stop_ollama_server,
+            stream_ollama_chat,
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

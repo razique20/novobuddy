@@ -10,12 +10,19 @@ interface ConversationState {
   isLoading: boolean;
   isSending: boolean;
   streamingContent: string | null;
+  errorMessage: string | null;
+  abortController: AbortController | null;
 
   loadConversations: () => Promise<void>;
   selectConversation: (id: string) => Promise<void>;
   createNewConversation: (customTitle?: string) => Promise<string>;
+  renameConversation: (id: string, newTitle: string) => Promise<void>;
   deleteConversation: (id: string) => Promise<void>;
   sendMessage: (content: string) => Promise<void>;
+  regenerateResponse: () => Promise<void>;
+  stopGeneration: () => void;
+  clearActiveConversation: () => Promise<void>;
+  clearError: () => void;
 }
 
 export const useConversationStore = create<ConversationState>((set, get) => ({
@@ -25,6 +32,8 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   isLoading: false,
   isSending: false,
   streamingContent: null,
+  errorMessage: null,
+  abortController: null,
 
   loadConversations: async () => {
     set({ isLoading: true });
@@ -32,7 +41,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       const convs = await NativeBridge.getConversations();
       set({ conversations: convs, isLoading: false });
 
-      // Automatically select the first conversation if none selected
+      // Automatically select first conversation if none selected
       if (convs.length > 0 && !get().activeConversationId) {
         await get().selectConversation(convs[0].id);
       }
@@ -43,7 +52,19 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
   },
 
   selectConversation: async (id: string) => {
-    set({ activeConversationId: id, isLoading: true });
+    // If currently generating, abort before switching
+    if (get().isSending && get().abortController) {
+      get().abortController?.abort();
+    }
+
+    set({
+      activeConversationId: id,
+      isLoading: true,
+      streamingContent: null,
+      errorMessage: null,
+      isSending: false,
+    });
+
     try {
       const msgs = await NativeBridge.getMessages(id);
       set({ messages: msgs, isLoading: false });
@@ -62,6 +83,7 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         conversations: [created, ...state.conversations],
         activeConversationId: id,
         messages: [],
+        errorMessage: null,
       }));
       return id;
     } catch (e) {
@@ -70,7 +92,25 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
     }
   },
 
+  renameConversation: async (id: string, newTitle: string) => {
+    if (!newTitle.trim()) return;
+    try {
+      await NativeBridge.updateConversationTitle(id, newTitle.trim());
+      set((state) => ({
+        conversations: state.conversations.map((c) =>
+          c.id === id ? { ...c, title: newTitle.trim() } : c
+        ),
+      }));
+    } catch (e) {
+      console.error('Failed to rename conversation:', e);
+    }
+  },
+
   deleteConversation: async (id: string) => {
+    if (get().activeConversationId === id && get().isSending) {
+      get().stopGeneration();
+    }
+
     try {
       await NativeBridge.deleteConversation(id);
       const remaining = get().conversations.filter((c) => c.id !== id);
@@ -92,12 +132,13 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
 
     let convId = get().activeConversationId;
     if (!convId) {
-      const previewTitle = content.length > 28 ? content.slice(0, 25) + '...' : content;
+      const previewTitle =
+        content.length > 28 ? content.slice(0, 25) + '...' : content;
       convId = await get().createNewConversation(previewTitle);
     }
 
     const optimisticUserMessage: Message = {
-      id: `temp-${Date.now()}`,
+      id: `usr-${Date.now()}`,
       conversation_id: convId,
       role: 'user',
       content,
@@ -105,10 +146,14 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
       is_simulated: false,
     };
 
+    const controller = new AbortController();
+
     set((state) => ({
       messages: [...state.messages, optimisticUserMessage],
       isSending: true,
       streamingContent: '',
+      errorMessage: null,
+      abortController: controller,
     }));
 
     try {
@@ -117,21 +162,120 @@ export const useConversationStore = create<ConversationState>((set, get) => ({
         content,
         (partial) => {
           set({ streamingContent: partial });
-        }
+        },
+        controller.signal
       );
 
       set((state) => ({
         messages: [...state.messages, assistantMessage],
         isSending: false,
         streamingContent: null,
+        abortController: null,
       }));
 
-      // Refresh conversation list to update counters & order
+      // Refresh conversations list to update title & timestamp
       const updatedList = await NativeBridge.getConversations();
       set({ conversations: updatedList });
-    } catch (e) {
-      console.error('Failed to send message:', e);
-      set({ isSending: false, streamingContent: null });
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        set({ isSending: false, streamingContent: null, abortController: null });
+        return;
+      }
+
+      console.error('Failed to stream AI response:', err);
+      const friendlyError =
+        err.message || 'An error occurred while generating response.';
+      set({
+        isSending: false,
+        streamingContent: null,
+        errorMessage: friendlyError,
+        abortController: null,
+      });
     }
+  },
+
+  regenerateResponse: async () => {
+    const { messages, activeConversationId, isSending } = get();
+    if (isSending || !activeConversationId || messages.length === 0) return;
+
+    // Find the last user prompt
+    let lastUserPrompt = '';
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') {
+        lastUserPrompt = messages[i].content;
+        break;
+      }
+    }
+
+    if (!lastUserPrompt) return;
+
+    // If the last message was assistant, remove it from view
+    if (messages[messages.length - 1].role === 'assistant') {
+      set({ messages: messages.slice(0, -1) });
+    }
+
+    const controller = new AbortController();
+    set({
+      isSending: true,
+      streamingContent: '',
+      errorMessage: null,
+      abortController: controller,
+    });
+
+    try {
+      const assistantMessage = await conversationService.sendMessage(
+        activeConversationId,
+        lastUserPrompt,
+        (partial) => {
+          set({ streamingContent: partial });
+        },
+        controller.signal
+      );
+
+      set((state) => ({
+        messages: [...state.messages, assistantMessage],
+        isSending: false,
+        streamingContent: null,
+        abortController: null,
+      }));
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        set({ isSending: false, streamingContent: null, abortController: null });
+        return;
+      }
+      set({
+        isSending: false,
+        streamingContent: null,
+        errorMessage: err.message || 'Failed to regenerate response.',
+        abortController: null,
+      });
+    }
+  },
+
+  stopGeneration: () => {
+    const { abortController } = get();
+    if (abortController) {
+      abortController.abort();
+      set({ isSending: false, streamingContent: null, abortController: null });
+    }
+  },
+
+  clearActiveConversation: async () => {
+    const { activeConversationId, stopGeneration } = get();
+    if (!activeConversationId) return;
+
+    stopGeneration();
+    try {
+      // Delete current and recreate fresh conversation
+      await NativeBridge.deleteConversation(activeConversationId);
+      const newId = await get().createNewConversation('New Conversation');
+      await get().selectConversation(newId);
+    } catch (e) {
+      console.error('Failed to clear conversation:', e);
+    }
+  },
+
+  clearError: () => {
+    set({ errorMessage: null });
   },
 }));

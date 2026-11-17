@@ -16,9 +16,9 @@ import { useAppStore } from '../../stores/appStore';
 import { SettingsSection, ThemeMode } from '../../types';
 import { Switch } from '../../components/common/Switch';
 import { Badge } from '../../components/common/Badge';
-import { PLANNED_PROVIDERS } from '../../services/ai/aiProvider';
 import { NativeBridge } from '../../services/native/bridge';
 import { NovaLogo } from '../../components/common/NovaLogo';
+import { ProviderSettingsView } from '../../components/providers/ProviderSettingsView';
 
 export const SettingsPage: React.FC = () => {
   const { settings, updateSettings, setTheme, clearData } = useSettingsStore();
@@ -381,39 +381,7 @@ export const SettingsPage: React.FC = () => {
         )}
 
         {/* Section 5: AI Providers */}
-        {currentSettingsSection === 'providers' && (
-          <div className="space-y-6">
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-semibold text-text-primary">AI Providers</h2>
-                <Badge variant="warning" size="sm">
-                  Coming in Phase 2
-                </Badge>
-              </div>
-              <p className="text-xs text-text-secondary mt-0.5">
-                NOVA is designed to connect to both local open-source models and premium cloud inference APIs.
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              {PLANNED_PROVIDERS.map((provider) => (
-                <div key={provider.id} className="nova-glass-card p-4 rounded-xl space-y-2 opacity-85">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-semibold text-text-primary">{provider.name}</span>
-                    <Badge variant={provider.type === 'local' ? 'purple' : 'accent'} size="sm">
-                      {provider.type === 'local' ? 'On-Device' : 'Cloud'}
-                    </Badge>
-                  </div>
-                  <p className="text-[11px] text-text-secondary">{provider.description}</p>
-                  <div className="pt-2 border-t border-border/40 flex items-center justify-between text-[11px] text-text-muted">
-                    <span>Default Model: {provider.model}</span>
-                    <span className="text-amber-400">Phase 2</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {currentSettingsSection === 'providers' && <ProviderSettingsView />}
 
         {/* Section 6: About */}
         {currentSettingsSection === 'about' && (

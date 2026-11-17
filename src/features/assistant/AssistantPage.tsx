@@ -6,17 +6,30 @@ import {
   Trash2,
   Bot,
   User,
-  Info,
   CornerDownLeft,
   MessageSquare,
   AlertCircle,
+  Square,
+  RotateCcw,
+  Copy,
+  Check,
+  Edit2,
+  Trash,
 } from 'lucide-react';
 import { useConversationStore } from '../../stores/conversationStore';
-import { Badge } from '../../components/common/Badge';
+import { ModelSelector } from '../../components/chat/ModelSelector';
+import { MarkdownContent } from '../../components/chat/MarkdownContent';
 
 export const AssistantPage: React.FC = () => {
   const [input, setInput] = useState('');
+  const [copiedMsgId, setCopiedMsgId] = useState<string | null>(null);
+  const [editingConvId, setEditingConvId] = useState<string | null>(null);
+  const [editTitleInput, setEditTitleInput] = useState('');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmClearActive, setConfirmClearActive] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   const {
     conversations,
@@ -25,11 +38,17 @@ export const AssistantPage: React.FC = () => {
     isLoading,
     isSending,
     streamingContent,
+    errorMessage,
     loadConversations,
     selectConversation,
     createNewConversation,
+    renameConversation,
     deleteConversation,
     sendMessage,
+    regenerateResponse,
+    stopGeneration,
+    clearActiveConversation,
+    clearError,
   } = useConversationStore();
 
   useEffect(() => {
@@ -40,13 +59,50 @@ export const AssistantPage: React.FC = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, streamingContent]);
 
+  // Global key listener for Escape to stop generation
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && isSending) {
+        stopGeneration();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isSending, stopGeneration]);
+
   const handleSend = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!input.trim() || isSending) return;
 
     const text = input.trim();
     setInput('');
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto';
+    }
     await sendMessage(text);
+  };
+
+  const handleCopyMessage = async (id: string, content: string) => {
+    try {
+      await navigator.clipboard.writeText(content);
+      setCopiedMsgId(id);
+      setTimeout(() => setCopiedMsgId(null), 2000);
+    } catch (err) {
+      console.error('Failed to copy text:', err);
+    }
+  };
+
+  const handleStartRename = (id: string, currentTitle: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingConvId(id);
+    setEditTitleInput(currentTitle);
+  };
+
+  const handleSaveRename = async (id: string) => {
+    if (editTitleInput.trim()) {
+      await renameConversation(id, editTitleInput.trim());
+    }
+    setEditingConvId(null);
   };
 
   const activeConv = conversations.find((c) => c.id === activeConversationId);
@@ -65,7 +121,7 @@ export const AssistantPage: React.FC = () => {
               await selectConversation(id);
             }}
             title="Start new conversation"
-            className="p-1 rounded-md bg-primary hover:bg-primary-hover text-white transition-colors cursor-pointer"
+            className="p-1 rounded-md bg-primary hover:bg-primary-hover text-white transition-colors cursor-pointer shadow-sm"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
@@ -80,128 +136,278 @@ export const AssistantPage: React.FC = () => {
           ) : (
             conversations.map((c) => {
               const isSelected = c.id === activeConversationId;
+              const isEditing = editingConvId === c.id;
+
               return (
                 <div
                   key={c.id}
                   onClick={() => selectConversation(c.id)}
-                  className={`group flex items-center justify-between p-2.5 rounded-xl text-xs font-medium cursor-pointer transition-all ${
+                  className={`group relative flex items-center justify-between p-2.5 rounded-xl text-xs font-medium cursor-pointer transition-all ${
                     isSelected
                       ? 'bg-primary/20 text-text-primary border border-primary/30 shadow-sm'
                       : 'text-text-secondary hover:text-text-primary hover:bg-background-card'
                   }`}
                 >
-                  <div className="flex items-center gap-2 truncate">
-                    <MessageSquare
-                      className={`w-3.5 h-3.5 flex-shrink-0 ${
-                        isSelected ? 'text-primary' : 'text-text-muted'
-                      }`}
-                    />
-                    <span className="truncate">{c.title}</span>
-                  </div>
+                  {isEditing ? (
+                    <div
+                      className="flex items-center gap-1.5 w-full"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <input
+                        type="text"
+                        value={editTitleInput}
+                        onChange={(e) => setEditTitleInput(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveRename(c.id);
+                          if (e.key === 'Escape') setEditingConvId(null);
+                        }}
+                        autoFocus
+                        className="w-full bg-background-card border border-primary px-1.5 py-0.5 rounded text-xs text-text-primary outline-none"
+                      />
+                      <button
+                        onClick={() => handleSaveRename(c.id)}
+                        className="text-emerald-400 p-0.5 hover:bg-emerald-500/20 rounded"
+                      >
+                        <Check className="w-3 h-3" />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2 truncate pr-2">
+                        <MessageSquare
+                          className={`w-3.5 h-3.5 flex-shrink-0 ${
+                            isSelected ? 'text-primary' : 'text-text-muted'
+                          }`}
+                        />
+                        <span className="truncate">{c.title}</span>
+                      </div>
 
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      deleteConversation(c.id);
-                    }}
-                    title="Delete conversation"
-                    className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-500/20 text-text-muted hover:text-red-400 transition-opacity"
-                  >
-                    <Trash2 className="w-3 h-3" />
-                  </button>
+                      <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => handleStartRename(c.id, c.title, e)}
+                          title="Rename"
+                          className="p-1 rounded hover:bg-white/10 text-text-muted hover:text-text-primary"
+                        >
+                          <Edit2 className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setConfirmDeleteId(c.id);
+                          }}
+                          title="Delete conversation"
+                          className="p-1 rounded hover:bg-red-500/20 text-text-muted hover:text-red-400"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </>
+                  )}
                 </div>
               );
             })
           )}
         </div>
+
+        {/* Clear Conversation Modal / Confirmation */}
+        {confirmDeleteId && (
+          <div className="mt-2 p-2.5 rounded-xl bg-red-500/10 border border-red-500/30 text-xs text-red-300 space-y-2">
+            <div>Delete this conversation?</div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  deleteConversation(confirmDeleteId);
+                  setConfirmDeleteId(null);
+                }}
+                className="px-2 py-1 bg-red-600 hover:bg-red-700 text-white rounded text-[11px] font-semibold"
+              >
+                Delete
+              </button>
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                className="px-2 py-1 bg-background-card hover:bg-background-cardHover text-text-secondary rounded text-[11px]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Main Chat Area */}
       <div className="flex-1 bg-background-secondary/30 rounded-2xl border border-border/70 flex flex-col overflow-hidden">
         {/* Chat Header */}
-        <div className="p-3.5 border-b border-border/50 flex items-center justify-between bg-background-card/40">
-          <div className="flex items-center gap-2.5">
-            <div className="w-6 h-6 rounded-md bg-primary/20 border border-primary/30 flex items-center justify-center text-primary">
-              <Bot className="w-3.5 h-3.5" />
+        <div className="p-3 border-b border-border/50 flex items-center justify-between bg-background-card/40">
+          <div className="flex items-center gap-3">
+            <div className="w-7 h-7 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary shadow-sm">
+              <Bot className="w-4 h-4" />
             </div>
             <div>
-              <div className="text-xs font-semibold text-text-primary">
+              <div className="text-xs font-semibold text-text-primary truncate max-w-[240px]">
                 {activeConv ? activeConv.title : 'NOVA Assistant'}
               </div>
-              <div className="text-[10px] text-text-muted flex items-center gap-1.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                Local Engine (Phase 1 Demo)
+              <div className="text-[10px] text-text-muted">
+                {messages.length} message{messages.length === 1 ? '' : 's'} in history
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <Badge variant="purple" size="sm">
-              Simulated Inference
-            </Badge>
+          {/* Model Selector & Actions */}
+          <div className="flex items-center gap-2.5">
+            <ModelSelector />
+
+            {/* Clear Conversation Button */}
+            {messages.length > 0 && (
+              <button
+                onClick={() => setConfirmClearActive(true)}
+                title="Clear conversation history"
+                className="p-1.5 rounded-xl border border-border/60 hover:border-red-500/40 hover:bg-red-500/10 text-text-muted hover:text-red-400 transition-all cursor-pointer"
+              >
+                <Trash className="w-3.5 h-3.5" />
+              </button>
+            )}
+
+            <button
+              onClick={async () => {
+                const id = await createNewConversation();
+                await selectConversation(id);
+              }}
+              title="New Chat"
+              className="px-2.5 py-1.5 rounded-xl bg-primary hover:bg-primary-hover text-white text-xs font-medium flex items-center gap-1.5 transition-all cursor-pointer shadow-sm"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span className="hidden sm:inline">New</span>
+            </button>
           </div>
         </div>
 
-        {/* Phase 1 Local Simulation Banner */}
-        <div className="bg-purple-950/20 border-b border-purple-500/20 px-4 py-2 flex items-center gap-2 text-[11px] text-purple-300">
-          <Info className="w-3.5 h-3.5 flex-shrink-0 text-purple-400" />
-          <span>
-            <strong>Phase 1 Local Demo Mode:</strong> Responses are generated locally to test IPC, window flows, and SQLite persistence. Real LLM model connectivity will be configured in Phase 2.
-          </span>
-        </div>
+        {/* Clear Conversation Confirmation Prompt */}
+        {confirmClearActive && (
+          <div className="px-4 py-2.5 bg-red-500/10 border-b border-red-500/20 flex items-center justify-between text-xs text-red-300 animate-fade-in">
+            <span>Clear all messages in this conversation?</span>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => {
+                  clearActiveConversation();
+                  setConfirmClearActive(false);
+                }}
+                className="px-2.5 py-0.5 bg-red-600 hover:bg-red-700 text-white rounded text-[11px] font-semibold"
+              >
+                Clear
+              </button>
+              <button
+                onClick={() => setConfirmClearActive(false)}
+                className="px-2.5 py-0.5 bg-background-card text-text-secondary hover:text-text-primary rounded text-[11px]"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
 
-        {/* Message Stream */}
+        {/* Error Alert Banner */}
+        {errorMessage && (
+          <div className="p-3 bg-red-100/80 dark:bg-red-500/15 border-b border-red-300 dark:border-red-500/30 flex items-start justify-between gap-3 text-xs text-red-900 dark:text-red-200 animate-fade-in shadow-xs">
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <span className="font-bold text-red-950 dark:text-red-100">Inference Error:</span>{' '}
+                <span className="text-red-900 dark:text-red-200 font-medium">{errorMessage}</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <button
+                onClick={() => regenerateResponse()}
+                className="px-2.5 py-1 bg-red-600 hover:bg-red-700 dark:bg-red-500/25 dark:hover:bg-red-500/35 text-white dark:text-red-200 rounded text-[11px] font-semibold flex items-center gap-1 transition-colors cursor-pointer shadow-xs"
+              >
+                <RotateCcw className="w-3 h-3" />
+                <span>Retry</span>
+              </button>
+              <button
+                onClick={clearError}
+                className="px-2 py-1 text-red-700 hover:text-red-950 dark:text-red-400 dark:hover:text-red-200 text-[11px] font-medium cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Message Stream Area */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {isLoading && messages.length === 0 ? (
             <div className="h-full flex items-center justify-center text-xs text-text-muted">
               Loading conversation from local SQLite...
             </div>
           ) : messages.length === 0 ? (
-            <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-3">
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-primary/20 to-accent-blue/20 border border-primary/30 flex items-center justify-center text-primary">
-                <Sparkles className="w-6 h-6" />
+            <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-4">
+              <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-primary/20 to-accent-blue/20 border border-primary/30 flex items-center justify-center text-primary shadow-lg animate-fade-in">
+                <Sparkles className="w-7 h-7" />
               </div>
-              <div className="space-y-1">
-                <h3 className="text-sm font-semibold text-text-primary">How can NOVA help today?</h3>
-                <p className="text-xs text-text-muted max-w-sm">
-                  Send a message to test simulated local responses and observe SQLite persistence.
+              <div className="space-y-1.5 max-w-md">
+                <h3 className="text-sm font-semibold text-text-primary">
+                  Welcome to NOVA Conversational Core
+                </h3>
+                <p className="text-xs text-text-muted leading-relaxed">
+                  Real AI intelligence is connected. Ask coding questions, draft content, or analyze logic. Select between local Ollama and Cloud AI providers above.
                 </p>
+              </div>
+
+              {/* Quick Prompt Suggestions */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-lg w-full pt-2">
+                {[
+                  'Write a quick TypeScript helper function',
+                  'Explain macOS Keychain security architecture',
+                  'Draft a project milestone checklist',
+                  'Compare Ollama local models vs Cloud APIs',
+                ].map((prompt, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => sendMessage(prompt)}
+                    className="p-2.5 rounded-xl border border-border/80 bg-background-card/50 hover:bg-background-card hover:border-primary/40 text-left text-xs text-text-secondary hover:text-text-primary transition-all cursor-pointer"
+                  >
+                    "{prompt}"
+                  </button>
+                ))}
               </div>
             </div>
           ) : (
-            messages.map((m) => {
+            messages.map((m, index) => {
               const isAssistant = m.role === 'assistant';
+              const isLastAssistant =
+                isAssistant && index === messages.length - 1 && !isSending;
+
               return (
                 <div
                   key={m.id}
-                  className={`flex gap-3 ${isAssistant ? 'justify-start' : 'justify-end'}`}
+                  className={`flex gap-3 group ${
+                    isAssistant ? 'justify-start' : 'justify-end'
+                  }`}
                 >
                   {isAssistant && (
-                    <div className="w-7 h-7 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center text-primary flex-shrink-0 mt-0.5">
+                    <div className="w-7 h-7 rounded-xl bg-primary/20 border border-primary/30 flex items-center justify-center text-primary flex-shrink-0 mt-0.5 shadow-sm">
                       <Bot className="w-4 h-4" />
                     </div>
                   )}
 
-                  <div className={`max-w-[78%] space-y-1.5`}>
+                  <div className="max-w-[82%] space-y-1.5">
                     <div
                       className={`p-3.5 rounded-2xl text-xs leading-relaxed ${
                         isAssistant
-                          ? 'bg-background-card border border-border/80 text-text-primary'
-                          : 'bg-primary text-white shadow-sm'
+                          ? 'bg-background-card border border-border/80 text-text-primary shadow-sm'
+                          : 'bg-primary text-white shadow-md'
                       }`}
                     >
-                      {/* Notice badge if simulated */}
-                      {isAssistant && m.is_simulated && (
-                        <div className="mb-2 pb-1.5 border-b border-border/50 flex items-center gap-1.5 text-[10px] text-amber-400 font-medium">
-                          <AlertCircle className="w-3 h-3 text-amber-400" />
-                          <span>Simulated Local Demo Response</span>
-                        </div>
+                      {isAssistant ? (
+                        <MarkdownContent content={m.content} />
+                      ) : (
+                        <div className="whitespace-pre-wrap">{m.content}</div>
                       )}
-                      <div className="whitespace-pre-wrap">{m.content}</div>
                     </div>
 
+                    {/* Metadata & Message Actions Bar */}
                     <div
-                      className={`text-[10px] text-text-muted px-1 flex items-center gap-2 ${
+                      className={`text-[10px] text-text-muted px-1 flex items-center gap-3 ${
                         isAssistant ? 'justify-start' : 'justify-end'
                       }`}
                     >
@@ -211,12 +417,42 @@ export const AssistantPage: React.FC = () => {
                           minute: '2-digit',
                         })}
                       </span>
-                      {m.tokens && <span>• {m.tokens} tokens</span>}
+
+                      {/* Copy message button */}
+                      <button
+                        onClick={() => handleCopyMessage(m.id, m.content)}
+                        className="opacity-0 group-hover:opacity-100 flex items-center gap-1 hover:text-text-primary transition-opacity cursor-pointer"
+                        title="Copy message"
+                      >
+                        {copiedMsgId === m.id ? (
+                          <>
+                            <Check className="w-2.5 h-2.5 text-emerald-400" />
+                            <span className="text-emerald-400">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="w-2.5 h-2.5" />
+                            <span>Copy</span>
+                          </>
+                        )}
+                      </button>
+
+                      {/* Regenerate button for last assistant message */}
+                      {isLastAssistant && (
+                        <button
+                          onClick={regenerateResponse}
+                          className="opacity-0 group-hover:opacity-100 flex items-center gap-1 hover:text-primary transition-opacity cursor-pointer"
+                          title="Regenerate response"
+                        >
+                          <RotateCcw className="w-2.5 h-2.5" />
+                          <span>Regenerate</span>
+                        </button>
+                      )}
                     </div>
                   </div>
 
                   {!isAssistant && (
-                    <div className="w-7 h-7 rounded-lg bg-white/10 border border-white/20 flex items-center justify-center text-text-primary flex-shrink-0 mt-0.5">
+                    <div className="w-7 h-7 rounded-xl bg-white/10 border border-white/20 flex items-center justify-center text-text-primary flex-shrink-0 mt-0.5 shadow-sm">
                       <User className="w-4 h-4" />
                     </div>
                   )}
@@ -225,14 +461,21 @@ export const AssistantPage: React.FC = () => {
             })
           )}
 
-          {/* Streaming Assistant Partial Chunk */}
-          {isSending && streamingContent !== null && (
-            <div className="flex gap-3 justify-start">
-              <div className="w-7 h-7 rounded-lg bg-primary/20 border border-primary/30 flex items-center justify-center text-primary flex-shrink-0 mt-0.5 animate-pulse">
+          {/* Active Streaming Token Render */}
+          {isSending && (
+            <div className="flex gap-3 justify-start animate-fade-in">
+              <div className="w-7 h-7 rounded-xl bg-primary/20 border border-primary/40 flex items-center justify-center text-primary flex-shrink-0 mt-0.5 animate-pulse">
                 <Bot className="w-4 h-4" />
               </div>
-              <div className="max-w-[78%] bg-background-card border border-primary/40 p-3.5 rounded-2xl text-xs text-text-primary">
-                <div className="whitespace-pre-wrap">{streamingContent || 'Thinking...'}</div>
+              <div className="max-w-[82%] bg-background-card border border-primary/40 p-3.5 rounded-2xl text-xs text-text-primary shadow-md">
+                {streamingContent ? (
+                  <MarkdownContent content={streamingContent} />
+                ) : (
+                  <div className="flex items-center gap-2 text-text-muted">
+                    <span className="w-2 h-2 rounded-full bg-primary animate-ping" />
+                    <span>Thinking...</span>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -242,35 +485,64 @@ export const AssistantPage: React.FC = () => {
 
         {/* Message Composer */}
         <div className="p-3 border-t border-border/50 bg-background-card/30">
-          <form onSubmit={handleSend} className="relative flex items-center">
-            <textarea
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  handleSend();
-                }
-              }}
-              rows={2}
-              placeholder="Ask NOVA (e.g. 'Explain global shortcuts', 'Show roadmap')..."
-              disabled={isSending}
-              className="w-full pl-3.5 pr-20 py-2.5 bg-background-card border border-border focus:border-primary/70 rounded-xl text-xs text-text-primary placeholder:text-text-muted outline-none transition-all resize-none"
-            />
+          <form onSubmit={handleSend} className="relative flex flex-col gap-2">
+            <div className="relative flex items-center">
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={(e) => {
+                  setInput(e.target.value);
+                  // auto-expand height
+                  e.target.style.height = 'auto';
+                  e.target.style.height = `${Math.min(e.target.scrollHeight, 140)}px`;
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    handleSend();
+                  }
+                }}
+                rows={1}
+                placeholder="Ask NOVA anything (Enter to send, Shift+Enter for new line)..."
+                disabled={isSending}
+                className="w-full pl-3.5 pr-24 py-3 bg-background-card border border-border focus:border-primary/70 rounded-xl text-xs text-text-primary placeholder:text-text-muted outline-none transition-all resize-none shadow-sm max-h-36"
+              />
 
-            <div className="absolute right-3 flex items-center gap-2">
-              <div className="hidden sm:flex items-center text-[10px] text-text-muted bg-background-secondary/80 border border-border/50 px-1.5 py-0.5 rounded">
-                <CornerDownLeft className="w-2.5 h-2.5 mr-0.5" />
-                Return
+              <div className="absolute right-2.5 flex items-center gap-1.5">
+                {/* Stop Generation Button when sending */}
+                {isSending ? (
+                  <button
+                    type="button"
+                    onClick={stopGeneration}
+                    title="Stop generation (Esc)"
+                    className="px-2.5 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white flex items-center gap-1 text-xs font-medium cursor-pointer shadow-sm animate-pulse"
+                  >
+                    <Square className="w-3 h-3 fill-current" />
+                    <span>Stop</span>
+                  </button>
+                ) : (
+                  <>
+                    <div className="hidden sm:flex items-center text-[10px] text-text-muted bg-background-secondary/80 border border-border/50 px-1.5 py-0.5 rounded">
+                      <CornerDownLeft className="w-2.5 h-2.5 mr-0.5" />
+                      Return
+                    </div>
+
+                    <button
+                      type="submit"
+                      disabled={!input.trim()}
+                      className="w-8 h-8 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-30 text-white flex items-center justify-center transition-all cursor-pointer shadow-sm"
+                    >
+                      <Send className="w-3.5 h-3.5" />
+                    </button>
+                  </>
+                )}
               </div>
+            </div>
 
-              <button
-                type="submit"
-                disabled={!input.trim() || isSending}
-                className="w-8 h-8 rounded-lg bg-primary hover:bg-primary-hover disabled:opacity-40 text-white flex items-center justify-center transition-all cursor-pointer shadow-sm"
-              >
-                <Send className="w-3.5 h-3.5" />
-              </button>
+            {/* Helper footer */}
+            <div className="flex items-center justify-between px-1 text-[10px] text-text-muted">
+              <span>Enter sends • Shift+Enter new line</span>
+              <span>Local SQLite history active</span>
             </div>
           </form>
         </div>
