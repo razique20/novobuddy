@@ -113,6 +113,34 @@ export const STATIC_MODELS: Record<ProviderId, ModelInfo[]> = {
   ],
   groq: [
     {
+      id: 'openai/gpt-oss-120b',
+      name: 'GPT-OSS 120B',
+      provider: 'groq',
+      description: 'State-of-the-art open weights reasoning model on Groq LPUs.',
+      contextLength: 131072,
+    },
+    {
+      id: 'qwen/qwen3.8-27b',
+      name: 'Qwen 3.8 (27B)',
+      provider: 'groq',
+      description: 'Ultra-fast multilingual and coding model with instant LPU inference.',
+      contextLength: 131072,
+    },
+    {
+      id: 'openai/gpt-oss-20b',
+      name: 'GPT-OSS 20B (Ultra-Fast)',
+      provider: 'groq',
+      description: 'Sub-50ms latency lightweight reasoning model on Groq LPUs.',
+      contextLength: 131072,
+    },
+    {
+      id: 'allam-2-7b',
+      name: 'ALLaM 2 (7B)',
+      provider: 'groq',
+      description: 'ALLaM instruction-tuned model running on Groq.',
+      contextLength: 4096,
+    },
+    {
       id: 'llama-3.3-70b-versatile',
       name: 'Llama 3.3 (70B Versatile)',
       provider: 'groq',
@@ -125,20 +153,6 @@ export const STATIC_MODELS: Record<ProviderId, ModelInfo[]> = {
       provider: 'groq',
       description: 'Blazing fast inference (>750 tok/s) for instant companion responses.',
       contextLength: 128000,
-    },
-    {
-      id: 'deepseek-r1-distill-llama-70b',
-      name: 'DeepSeek R1 (Distill Llama 70B)',
-      provider: 'groq',
-      description: 'DeepSeek R1 reasoning capabilities accelerated on Groq LPU chips.',
-      contextLength: 128000,
-    },
-    {
-      id: 'mixtral-8x7b-32768',
-      name: 'Mixtral 8x7B',
-      provider: 'groq',
-      description: 'Mistral high-performance mixture-of-experts model.',
-      contextLength: 32768,
     },
   ],
 };

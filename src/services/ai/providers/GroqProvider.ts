@@ -10,6 +10,7 @@ import {
 import { ModelRegistry } from '../ModelRegistry';
 import { StreamParser } from '../StreamHandler';
 import { SecretManager } from '../../security/secretManager';
+import { NativeBridge } from '../../native/bridge';
 
 export class GroqProvider extends BaseProvider {
   readonly id: ProviderId = 'groq';
@@ -29,23 +30,17 @@ export class GroqProvider extends BaseProvider {
 
     const startTime = performance.now();
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-      const res = await fetch(`${this.baseUrl}/models`, {
+      const res = await NativeBridge.nativeHttpRequest(`${this.baseUrl}/models`, {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${key}`,
         },
-        signal: controller.signal,
       });
 
-      clearTimeout(timeoutId);
-
       if (!res.ok) {
-        let errDetail = res.statusText;
+        let errDetail = `HTTP ${res.status}`;
         try {
-          const body = await res.json();
+          const body = JSON.parse(res.body);
           if (body?.error?.message) errDetail = body.error.message;
         } catch {
           // ignore
@@ -56,7 +51,7 @@ export class GroqProvider extends BaseProvider {
         };
       }
 
-      const data = await res.json();
+      const data = JSON.parse(res.body);
       const latencyMs = Math.round(performance.now() - startTime);
       const modelsList = Array.isArray(data?.data)
         ? data.data.map((m: any) => m.id)
@@ -80,30 +75,50 @@ export class GroqProvider extends BaseProvider {
     const key = await SecretManager.getApiKey(this.id);
     if (key) {
       try {
-        const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 4000);
-
-        const res = await fetch(`${this.baseUrl}/models`, {
+        const res = await NativeBridge.nativeHttpRequest(`${this.baseUrl}/models`, {
+          method: 'GET',
           headers: { Authorization: `Bearer ${key}` },
-          signal: controller.signal,
         });
-        clearTimeout(timeoutId);
 
         if (res.ok) {
-          const data = await res.json();
+          const data = JSON.parse(res.body);
           if (Array.isArray(data?.data) && data.data.length > 0) {
-            const mapped: ModelInfo[] = data.data
-              .filter((m: any) => m.active !== false)
-              .map((m: any) => ({
-                id: m.id,
-                name: m.id,
-                provider: 'groq' as const,
-                description: `Fast LPU model on Groq`,
-                contextLength: m.context_window || 128000,
-              }));
+            const isChatModel = (m: any) => {
+              const id = (m.id || '').toLowerCase();
+              if (id.includes('whisper') || id.includes('guard') || id.includes('orpheus')) {
+                return false;
+              }
+              if (m.output_modalities && !m.output_modalities.includes('text')) {
+                return false;
+              }
+              return true;
+            };
 
-            ModelRegistry.setDynamicModels(this.id, mapped);
-            return mapped;
+            const chatModels = data.data.filter(isChatModel);
+
+            const formatModelName = (id: string, name?: string) => {
+              if (name && name !== id) return name;
+              if (id === 'openai/gpt-oss-120b') return 'GPT-OSS 120B (OpenAI on Groq)';
+              if (id === 'openai/gpt-oss-20b') return 'GPT-OSS 20B (Sub-50ms LPU)';
+              if (id === 'qwen/qwen3.8-27b') return 'Qwen 3.8 27B (Alibaba on Groq)';
+              if (id === 'allam-2-7b') return 'ALLaM 2 (7B)';
+              if (id === 'llama-3.3-70b-versatile') return 'Llama 3.3 (70B Versatile)';
+              if (id === 'llama-3.1-8b-instant') return 'Llama 3.1 (8B Instant)';
+              return id;
+            };
+
+            const mapped: ModelInfo[] = chatModels.map((m: any) => ({
+              id: m.id,
+              name: formatModelName(m.id, m.name),
+              provider: 'groq' as const,
+              description: `Fast Groq LPU inference (${m.context_window ? `${Math.round(m.context_window / 1024)}k context` : '128k context'})`,
+              contextLength: m.context_window || 128000,
+            }));
+
+            if (mapped.length > 0) {
+              ModelRegistry.setDynamicModels(this.id, mapped);
+              return mapped;
+            }
           }
         }
       } catch {
@@ -123,6 +138,44 @@ export class GroqProvider extends BaseProvider {
       throw new Error('Groq API key is missing. Please configure it in Settings.');
     }
 
+    const payloadData: Record<string, any> = {
+      model: request.model || 'openai/gpt-oss-120b',
+      messages: request.messages.map((m) => ({
+        role: m.role,
+        content: m.content,
+      })),
+      stream: true,
+      temperature: request.temperature ?? 0.7,
+    };
+
+    // If maxTokens is set, clamp it to 1000 to prevent Groq OTPM rate limit errors on models like Qwen
+    if (request.maxTokens) {
+      payloadData.max_tokens = Math.min(request.maxTokens, 1000);
+    }
+
+    const payload = JSON.stringify(payloadData);
+
+    // 1. Primary path in Tauri: native IPC streaming (bypasses WKWebView restrictions)
+    if (NativeBridge.isTauri()) {
+      try {
+        await NativeBridge.nativeStreamChat(
+          `${this.baseUrl}/chat/completions`,
+          payload,
+          {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${key}`,
+          },
+          (token) => {
+            handler.onToken(token);
+          }
+        );
+        return;
+      } catch (err: any) {
+        throw this.formatError(err);
+      }
+    }
+
+    // 2. Fallback path in browser dev/testing
     try {
       const response = await fetch(`${this.baseUrl}/chat/completions`, {
         method: 'POST',
@@ -130,16 +183,7 @@ export class GroqProvider extends BaseProvider {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${key}`,
         },
-        body: JSON.stringify({
-          model: request.model || 'llama-3.3-70b-versatile',
-          messages: request.messages.map((m) => ({
-            role: m.role,
-            content: m.content,
-          })),
-          stream: true,
-          temperature: request.temperature ?? 0.7,
-          max_tokens: request.maxTokens ?? 2048,
-        }),
+        body: payload,
         signal: abortSignal,
       });
 

@@ -231,3 +231,34 @@ pub fn stream_ollama_chat(
     )
 }
 
+#[tauri::command]
+pub fn native_http_request(
+    url: String,
+    method: Option<String>,
+    headers: Option<Vec<(String, String)>>,
+    body: Option<String>,
+) -> Result<crate::services::http::NativeHttpResponse, String> {
+    crate::services::http::HttpService::request(
+        &url,
+        method.as_deref(),
+        headers,
+        body.as_deref(),
+    )
+}
+
+#[tauri::command]
+pub fn native_stream_chat(
+    url: String,
+    headers: Option<Vec<(String, String)>>,
+    body: String,
+    on_chunk: tauri::ipc::Channel<String>,
+) -> Result<(), String> {
+    crate::services::http::HttpService::stream_sse(
+        &url,
+        headers,
+        &body,
+        &on_chunk,
+    )
+}
+
+

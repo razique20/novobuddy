@@ -383,4 +383,86 @@ export class NativeBridge {
       });
     });
   }
+
+  /**
+   * Universal native HTTP request bypassing WKWebView ATS/CORS restrictions
+   */
+  static async nativeHttpRequest(
+    url: string,
+    options?: {
+      method?: string;
+      headers?: Record<string, string>;
+      body?: string;
+    }
+  ): Promise<{ status: number; body: string; ok: boolean }> {
+    if (isTauriEnvironment()) {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const headersList = options?.headers ? Object.entries(options.headers) : null;
+      return await invoke<{ status: number; body: string; ok: boolean }>('native_http_request', {
+        url,
+        method: options?.method || 'GET',
+        headers: headersList,
+        body: options?.body || null,
+      });
+    }
+
+    // Fallback in web/tests
+    const res = await fetch(url, {
+      method: options?.method || 'GET',
+      headers: options?.headers,
+      body: options?.body,
+    });
+    const body = await res.text();
+    return {
+      status: res.status,
+      body,
+      ok: res.ok,
+    };
+  }
+
+  /**
+   * Universal native SSE chat streaming for cloud providers (Groq, OpenAI, Anthropic)
+   */
+  static async nativeStreamChat(
+    url: string,
+    body: string,
+    headers: Record<string, string>,
+    onToken: (token: string) => void
+  ): Promise<string> {
+    if (!isTauriEnvironment()) {
+      throw new Error('nativeStreamChat requires Tauri native environment');
+    }
+
+    const { invoke, Channel } = await import('@tauri-apps/api/core');
+    const headersList = Object.entries(headers);
+
+    return new Promise<string>((resolve, reject) => {
+      let accumulated = '';
+
+      const onChunk = new Channel<string>();
+      onChunk.onmessage = (chunk: string) => {
+        if (chunk === '__DONE__') {
+          resolve(accumulated);
+          return;
+        }
+        if (chunk.startsWith('__ERROR__:')) {
+          const errorMsg = chunk.slice('__ERROR__:'.length);
+          reject(new Error(errorMsg));
+          return;
+        }
+        accumulated += chunk;
+        onToken(chunk);
+      };
+
+      invoke('native_stream_chat', {
+        url,
+        headers: headersList,
+        body,
+        onChunk,
+      }).catch((err: any) => {
+        reject(new Error(typeof err === 'string' ? err : err?.message || 'Native stream failed'));
+      });
+    });
+  }
 }
+

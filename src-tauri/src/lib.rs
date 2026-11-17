@@ -136,6 +136,8 @@ pub fn run() {
             start_ollama_server,
             stop_ollama_server,
             stream_ollama_chat,
+            native_http_request,
+            native_stream_chat,
         ])
         .run(tauri::generate_context!())
         .expect("error while building tauri application");

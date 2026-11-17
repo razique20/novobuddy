@@ -233,6 +233,10 @@ export const ProviderSettingsView: React.FC = () => {
       const existingKey = await SecretManager.getApiKey(id);
       if (existingKey) {
         setSavedKeyMask(SecretManager.maskKey(existingKey));
+        // Refresh models for this provider
+        aiProviderManager.getModelsForProvider(id).then((m) => {
+          setModelsMap((prev) => ({ ...prev, [id]: m }));
+        });
       } else {
         setSavedKeyMask(null);
       }
@@ -259,6 +263,8 @@ export const ProviderSettingsView: React.FC = () => {
           await SecretManager.setApiKey(activeConfigureId, inputKey);
           setSavedKeyMask(SecretManager.maskKey(inputKey));
           setInputKey('');
+          await testProviderConnection(activeConfigureId, true);
+        } else if (savedKeyMask) {
           await testProviderConnection(activeConfigureId, true);
         }
       }
@@ -535,6 +541,12 @@ export const ProviderSettingsView: React.FC = () => {
                           type={showKey ? 'text' : 'password'}
                           value={inputKey}
                           onChange={(e) => setInputKey(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleSaveConfig();
+                            }
+                          }}
                           placeholder={
                             provider.id === 'openai'
                               ? 'sk-...'
